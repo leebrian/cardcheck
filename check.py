@@ -21,6 +21,9 @@ import subprocess
 import requests
 import json
 from pathlib import Path
+import zipfile
+import io
+
 
 #write a dictionary of http cookies to a local file
 def makeCookies(cookies):
@@ -33,15 +36,32 @@ def eatCookies():
     with open("cookies.json","r") as file:
         return json.load(file)
 
+#go get a card json library, write it to disk, unzip it and return it as a Path
+#keep the zip too so we cn compare byte size for updates
+def getCardLibrary(libFile):
+    print("in getCardLib:" + str(libFile))
+    response = requests.get(MAGIC_CARD_JSON_URL, stream=True)
+    bytes = io.BytesIO(response.content)
+    
+    with open(libFile.with_suffix(".zip"), "wb") as file:
+        file.write(bytes.read(-1))
+
+    zip = zipfile.ZipFile(bytes)
+
+    zip.extractall(libFile.parent)
+    return libFile
+
+MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
+
 print("Hello World!!!!")
 
 #first figure out today's date
 today = datetime.datetime.now()
 strToday = today.strftime("%Y%m%d")
-print(strToday)
+#print(strToday)
 
 strTodayFileName = strToday+"-magic-cards.csv"
-print(strTodayFileName)
+print("CSV that I want for today: " + strTodayFileName)
 
 #now call out to deckbox.org to get inventory as csv, this command is dumped from firefox and seems to work
 #found this code from handy site https://curl.trillworks.com/
@@ -77,4 +97,36 @@ else:
     todayFile.write(response.text)
     todayFile.close()
 
+#now let's make sure that there's the most recent card library in json format
+cardLibraryFile = Path("data/AllCards.json")
+print("lib file:" + str(cardLibraryFile) + str(cardLibraryFile.exists()))
+cardDict = None
 
+#if we don't have the file yet, go get it
+if not cardLibraryFile.exists():
+    print("no card db")    
+    cardLibraryFile = getCardLibrary(cardLibraryFile)
+    print("lib file after :" + str(cardLibraryFile))
+
+    #print(cardDict)
+else:
+    print("card db exists")
+    
+    #check to make sure is most recent
+    localZipSize = cardLibraryFile.with_suffix(".zip").stat().st_size
+    print("localZipSize " + str(localZipSize))
+
+    #check the header from json url
+    head = requests.head(MAGIC_CARD_JSON_URL)
+    remoteZipSize = int(head.headers["Content-Length"])
+    print("remoteZipSize content-length " + str(remoteZipSize))
+    #only fetch if local (from a previous fetch) is a different size
+    if (localZipSize != remoteZipSize):
+        print("not equal size, let's get a fresh card lib")
+        cardLibraryFile = getCardLibrary(cardLibraryFile)
+
+
+with cardLibraryFile.open() as file:
+        cardDict = json.load(file)
+
+print("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
