@@ -328,8 +328,18 @@ dfMergeCards = pandas.merge(dfTodaysCards,dfCompareCards,how="outer",on=["Name",
 dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","CompareCount","Price","ComparePrice"]]
 dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
 #dfMergeCards.info()
+#clean up foil flag
 dfMergeCards["Foil"].fillna("N",inplace=True)
 dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
+
+#clean up nulls values in old set for new cards
+dfMergeCards["OldCount"].fillna(0,inplace=True)
+dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
+
+dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
+dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
+dfMergeCards.eval("TotalChange = ((NewPrice*NewCount) - (OldPrice*OldCount))",inplace=True)
+
 dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
 print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
 
@@ -368,7 +378,7 @@ print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMe
       
 debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
 
-printStats(dictGeneralStats)
+printStats(dictGeneralStats, "Overall")
 
 
 #print(today.strftime("%Y%m%d-%H:%M:%S:%f"))
