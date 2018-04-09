@@ -15,6 +15,20 @@
                 "panel": "shared",
                 "focus": false
             }
+        },
+        {
+            "label": "RunPythonWithDebug",
+            "type": "shell",
+            "command": "python ${relativeFile}","promptOnClose": true,"isBackground": true,
+            "args":["--debug"],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation":{
+                "panel": "shared",
+                "focus": false
+            }
         }
     ]
 }
