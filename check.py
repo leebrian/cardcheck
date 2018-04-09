@@ -332,10 +332,15 @@ dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","Compar
 dfMergeCards["Foil"].fillna("N",inplace=True)
 dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
 
-#clean up nulls values in old set for new cards
+#clean up nulls values in old set for new cards, set up a new field for new cards
+dfMergeCards["OldCount"].fillna(-1,inplace=True)
+dfMergeCards.eval("IsNew = (OldCount == -1)",inplace=True)
+dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0 
+
 dfMergeCards["OldCount"].fillna(0,inplace=True)
 dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
 
+#add some explicit columns for convenience in the log csv. Don't think I need these ultimately because of querying
 dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
 dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
 dfMergeCards.eval("TotalChange = ((NewPrice*NewCount) - (OldPrice*OldCount))",inplace=True)
@@ -349,7 +354,9 @@ print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(d
 #dollar changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
 #dollar changes-dropped-bulk cards, count change, price change, total change, old-count,new-count,old-price,new-price
 #bulk changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
+dictBulkToTrade = {}
 #bulk changes-upped-dollar cards, count change, price change, total change, old-count,new-count,old-price,new-price
+dictBulktoDollar = {}
 #general,new cards
 dictNewCards = {}
 #general,gone cards
@@ -362,16 +369,21 @@ rowsProcessed = 0
 for index,row in dfMergeCards.iterrows():
     #print(str(index) + ":" + str(row))
     #is this a new card? This should not require any updates. Since new cards are already categorized
-    if pandas.isnull(row["OldPrice"]):
+    if row["IsNew"]:
         debug("New (not in the old file):" + str(row))
         dictNewCards[makeMushedKey(row)] = [{"Count":row["NewCount"],"Price":row["NewPrice"]}]
-        rowsProcessed+=1
+        #rowsProcessed+=1
     else:
         if row["NewPrice"] >= 2:
             #print("NewPrice is over $2: " + str(row))
-            if row["OldPrice"] >= 2:
-                #print("Both New and Old Price over $2, no shift: " + str(row))
-                updateRowStats(row,dictGeneralStats)
+            updateRowStats(row,dictGeneralStats)
+            if row["OldPrice"] < 2: #this means new item for trade box
+                if row["OldPrice"] < 1: #upgrade from bulk
+                    updateRowStats(row,dictBulkToTrade)
+                else:
+                    updateRowStats(row,dictBulktoDollar)
+                rowsProcessed+=1
+            else: 
                 rowsProcessed+=1
 
 print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMergeCards)) + ")")
@@ -379,6 +391,11 @@ print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMe
 debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
 
 printStats(dictGeneralStats, "Overall")
+printStats(dictBulkToTrade, "Bulk Upgraded to Trade Box")
+printStats(dictBulktoDollar, "Bulk Upgraded to Dollar Box")
+
+dfTrades = dfMergeCards.query("(NewPrice >= 2) & (IsNew != True) & (OldPrice < 2)")
+print("new trade upgrades: " + str(len(dfTrades)))
 
 
 #print(today.strftime("%Y%m%d-%H:%M:%S:%f"))
