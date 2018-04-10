@@ -151,6 +151,7 @@ def configureLogging():
             logger.setLevel(logging.DEBUG)
             logger.addHandler(logging.StreamHandler())
             print(str(logLevel))
+    print("Debug level: " + str(logger.getEffectiveLevel()))
         
 #log a debug message so I don't have to type getLogger... a million times, 
 def debug(msg):
@@ -164,9 +165,6 @@ def makeMushedKey(row):
 #Update count/price stats for a row; deltas are calculated from the stats dictionary with mushedKeys as key
 def updateRowStats(row,dictStats):
     key = makeMushedKey(row)
-
-    if key in dictStats:
-        stat = dictStats[makeMushedKey(row)]
 
     oldCount = 0.0
     if pandas.notnull(row["OldCount"]):
@@ -220,12 +218,13 @@ def printStats(dict, label="Unknown"):
             totalLoss+=item["total-change"]
 
     print("total items: " + str(len(list)))
-    print("totalQuantityChange:" + str(int(totalQuantityChange)) + "; positive: " + str(numberPositive) + "; negative: " + str(numberNegative))
-    print("totalPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
+    print("netQuantityChange:" + str(int(totalQuantityChange)) + "; cardsIncreasedValue: " + str(numberPositive) + "; cardsDecreasedValue: " + str(numberNegative))
+    print("netPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
 
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
+TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
 
 print("Hello World!!!!")
 
@@ -332,13 +331,18 @@ dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","Compar
 dfMergeCards["Foil"].fillna("N",inplace=True)
 dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
 
-#clean up nulls values in old set for new cards, set up a new field for new cards
+#clean up null values in old set for new cards, set up a new field for new cards
 dfMergeCards["OldCount"].fillna(-1,inplace=True)
 dfMergeCards.eval("IsNew = (OldCount == -1)",inplace=True)
 dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0 
-
-dfMergeCards["OldCount"].fillna(0,inplace=True)
 dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
+
+#clean up null values in new set for deleted cards, set up a new field for deleted cards
+dfMergeCards["NewCount"].fillna(-1,inplace=True)
+dfMergeCards.eval("IsGone = (NewCount == -1)",inplace=True)
+dfMergeCards.loc[dfMergeCards["NewCount"] == -1, "NewCount"] = 0 
+dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
+
 
 #add some explicit columns for convenience in the log csv. Don't think I need these ultimately because of querying
 dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
@@ -350,53 +354,127 @@ print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(d
 
 #set up a couple of stats dictionaries, 
 #trade changes-dropped-dollar cards,count change, price change, total change, old-count,new-count,old-price,new-price
+dictTradesToDollar = {}
 #trade changes-dropped-bulk cards,count change, price change, total change, old-count,new-count,old-price,new-price
+dictTradesToBulk = {}
 #dollar changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
+dictDollarToTrade = {}
 #dollar changes-dropped-bulk cards, count change, price change, total change, old-count,new-count,old-price,new-price
+dictDollarToBulk = {}
 #bulk changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
 dictBulkToTrade = {}
 #bulk changes-upped-dollar cards, count change, price change, total change, old-count,new-count,old-price,new-price
 dictBulktoDollar = {}
-#general,new cards
+#new cards
 dictNewCards = {}
-#general,gone cards
+#removed cards
+dictGoneCards = {}
+#unchanged cards
+dictUnchangedCards = {}
+#general stats
 dictGeneralStats = {}
 
 rowsProcessed = 0
 
-
-
 for index,row in dfMergeCards.iterrows():
     #print(str(index) + ":" + str(row))
     #is this a new card? This should not require any updates. Since new cards are already categorized
+    updateRowStats(row,dictGeneralStats)
     if row["IsNew"]:
         debug("New (not in the old file):" + str(row))
-        dictNewCards[makeMushedKey(row)] = [{"Count":row["NewCount"],"Price":row["NewPrice"]}]
-        #rowsProcessed+=1
+        #dictNewCards[makeMushedKey(row)] = [{"Count":row["NewCount"],"Price":row["NewPrice"]}]
+        updateRowStats(row,dictNewCards)
+        rowsProcessed+=1
+    elif row["IsGone"]:
+        debug("Gone (not in the new file):" + str(row))
+        updateRowStats(row,dictGoneCards)
+        rowsProcessed+=1
     else:
-        if row["NewPrice"] >= 2:
+        #check for changes to trade
+        if row["NewPrice"] >= TRADE_BOX_THRESHOLD:
             #print("NewPrice is over $2: " + str(row))
-            updateRowStats(row,dictGeneralStats)
-            if row["OldPrice"] < 2: #this means new item for trade box
-                if row["OldPrice"] < 1: #upgrade from bulk
+            if row["OldPrice"] < TRADE_BOX_THRESHOLD: #if new>2&old<2,this means new item for trade box
+                if row["OldPrice"] < 1: #if new>2&old<1,upgrade from bulk
                     updateRowStats(row,dictBulkToTrade)
-                else:
-                    updateRowStats(row,dictBulktoDollar)
+                else:#if it's not going to trade then it's going to dollar
+                    updateRowStats(row,dictDollarToTrade)
                 rowsProcessed+=1
-            else: 
+            else:#if new>2,old>2, then don't do anything (ie, no change) 
+                updateRowStats(row,dictUnchangedCards)
                 rowsProcessed+=1
-
+        #change for changes to dollar
+        elif row["NewPrice"] >= 1:
+            if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new>1&old>2, downgrade from trades to dollar
+                updateRowStats(row,dictTradesToDollar)
+                rowsProcessed+=1
+            elif row["OldPrice"] < 1:#if new>1&old<1, upgrade from bulk to dollar
+                updateRowStats(row,dictBulktoDollar)
+                rowsProcessed+=1
+            else:#if new>1&old>1, do nothing (ie, no change)
+                updateRowStats(row,dictUnchangedCards)
+                rowsProcessed+=1
+        #check for downgrades to bulk
+        elif row["NewPrice"] < 1:
+            if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new<1&old>2, downgrade from trades to bulk
+                updateRowStats(row,dictTradesToBulk)
+                rowsProcessed+=1
+            elif row["OldPrice"] >= 1:#if new<1&old>1, downgrade from dollar to bulk
+                updateRowStats(row,dictDollarToBulk)
+                rowsProcessed+=1
+            else:#if new<1&old<1, do nothing (ie, no change)
+                updateRowStats(row,dictUnchangedCards)
+                rowsProcessed+=1
+            
 print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMergeCards)) + ")")
       
 debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
 
 printStats(dictGeneralStats, "Overall")
+printStats(dictNewCards, "NewCards")
+printStats(dictGoneCards, "GoneCards")
+printStats(dictUnchangedCards, "UnchangedCards")
 printStats(dictBulkToTrade, "Bulk Upgraded to Trade Box")
 printStats(dictBulktoDollar, "Bulk Upgraded to Dollar Box")
+printStats(dictDollarToTrade, "Dollar Upgraded to Trade Box")
+printStats(dictDollarToBulk, "Dollar Downgraded to Bulk Box")
+printStats(dictTradesToDollar, "Trades Downgraded to Dollar Box")
+printStats(dictTradesToBulk, "Trades Downgraded to Bulk Box")
 
-dfTrades = dfMergeCards.query("(NewPrice >= 2) & (IsNew != True) & (OldPrice < 2)")
-print("new trade upgrades: " + str(len(dfTrades)))
 
+
+#query for bulk to trades (good)
+dfBulkToTrades = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
+#query for bulk to dollar (good)
+dfBulkToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & ( (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) +") )")
+#query for dollar to trades (good)
+dfDollarToTrades = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
+#query for dollar to bulk (bad)
+dfDollarToBulk = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice < 1)")
+#query for trades to dollar (bad)
+dfTradeToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD) +")")
+#query for trade to bulk (bad)
+dfTradeToBulk = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice <1)")
+#query for new cards
+dfNewCards = dfMergeCards.query("(IsNew == True)")
+#query for removed cards
+dfGoneCards = dfMergeCards.query("(IsGone == True)")
+#query for unch
+dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" \
+    + " ( (OldPrice >= "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= "+str(TRADE_BOX_THRESHOLD)+") )" \
+    + "| ( ( (OldPrice >= 1) & (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") ) & ( (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD)+") ) )" \
+    + "| ( (OldPrice < 1) & (NewPrice < 1) )"\
+    +")")
+print("upgrades from bulk to trades: " + str(len(dfBulkToTrades)))
+print("upgrades from bulk to dollar: " + str(len(dfBulkToDollar)))
+print("upgrades from dollar to trades: " + str(len(dfDollarToTrades)))
+print("dowgrades from dollar to bulk: " + str(len(dfDollarToBulk)))
+print("dowgrades from trade to dollar: " + str(len(dfTradeToDollar)))
+print("dowgrades from trade to bulk: " + str(len(dfTradeToBulk)))
+print("new cards: " + str(len(dfNewCards)))
+print("gone cards: " + str(len(dfGoneCards)))
+print("unchanged cards: " + str(len(dfUnchCards)))
+print("total cards from query: " + str(len(dfBulkToTrades)+len(dfBulkToDollar)+len(dfDollarToTrades)+len(dfDollarToBulk)+len(dfTradeToDollar)+len(dfTradeToBulk)+len(dfNewCards)+len(dfGoneCards)+len(dfUnchCards)))
+print("total cards from row by row processing: " + str(len(dictGeneralStats)))
 
 #print(today.strftime("%Y%m%d-%H:%M:%S:%f"))
 dictRunLog[today.strftime("%Y%m%d-%H:%M:%S:%f")] = {"old-file" : strCompareFileName, "new-file" : strTodayFileName}
