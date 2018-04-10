@@ -20,6 +20,7 @@
 import pandas
 import numpy
 import datetime
+from time import strftime
 import subprocess
 import requests
 import json
@@ -30,7 +31,7 @@ from operator import itemgetter
 import os
 import logging
 import sys
-
+import shutil
 
 #write a dictionary of http cookies to a local file
 def makeCookies(cookies):
@@ -295,9 +296,15 @@ else:
     head = requests.head(MAGIC_CARD_JSON_URL)
     remoteZipSize = int(head.headers["Content-Length"])
     debug("remoteZipSize content-length " + str(remoteZipSize))
+    
     #only fetch if local (from a previous fetch) is a different size
     if (localZipSize != remoteZipSize):
         print("not equal size, let's get a fresh card lib")
+        #backup the current file, just in case
+        timestampMod = os.path.getmtime(cardLibraryFile)
+        dtMod = datetime.datetime.fromtimestamp(timestampMod)
+        strModDate = dtMod.strftime("%Y%m%d")
+        shutil.copy(cardLibraryFile,DATA_DIR_NAME + strModDate + "-" + os.path.basename(cardLibraryFile) + ".bak")
         cardLibraryFile = getCardLibrary(cardLibraryFile)
 
 
@@ -348,6 +355,8 @@ dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
 dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
 dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
 dfMergeCards.eval("TotalChange = ((NewPrice*NewCount) - (OldPrice*OldCount))",inplace=True)
+
+#TODO: merge in org category from card library, since it's not in deckbox file
 
 dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
 print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
