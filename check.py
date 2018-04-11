@@ -159,9 +159,9 @@ def debug(msg):
     logger = logging.getLogger(__name__)
     logger.debug(msg)
 
-#Return a unique key based on a row, name+edition+condition+foil+cardNumber
+#Return a unique key based on a row, sortcat+name+edition+condition+foil+cardNumber
 def makeMushedKey(row):
-    return row["Name"]+"-"+row["Edition"]+"-"+row["Condition"]+"-"+str(row["Card Number"])+"-"+str(row["Foil"])
+    return row["SortCategory"]+"-"+row["Name"]+"-"+row["Edition"]+"-"+row["Condition"]+"-"+str(row["Card Number"])+"-"+str(row["Foil"])
 
 #Update count/price stats for a row; deltas are calculated from the stats dictionary with mushedKeys as key
 def updateRowStats(row,dictStats):
@@ -222,6 +222,116 @@ def printStats(dict, label="Unknown"):
     print("netQuantityChange:" + str(int(totalQuantityChange)) + "; cardsIncreasedValue: " + str(numberPositive) + "; cardsDecreasedValue: " + str(numberNegative))
     print("netPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
 
+#Fetch or build the AllCads library
+#out: dict representation of the AllCards.json file
+def buildCardLibrary():
+
+    #now let's make sure that there's the most recent card library in json format
+    cardLibraryFile = Path(DATA_DIR_NAME + "AllCards.json")
+    debug("magic card lib file:" + str(cardLibraryFile) + ":"+str(cardLibraryFile.exists()))
+    cardLibraryDict = None
+
+    #if we don't have the file yet, go get it
+    if not cardLibraryFile.exists():
+        print("no card db")    
+        cardLibraryFile = getCardLibrary(cardLibraryFile)
+        print("lib file after :" + str(cardLibraryFile))
+
+        #print(cardLibraryDict)
+    else:
+        debug("card db exists")
+        
+        #check to make sure is most recent
+        localZipSize = cardLibraryFile.with_suffix(".zip").stat().st_size
+        debug("localZipSize " + str(localZipSize))
+
+        #check the header from json url
+        head = requests.head(MAGIC_CARD_JSON_URL)
+        remoteZipSize = int(head.headers["Content-Length"])
+        debug("remoteZipSize content-length " + str(remoteZipSize))
+        
+        #only fetch if local (from a previous fetch) is a different size
+        if (localZipSize != remoteZipSize):
+            print("not equal size, let's get a fresh card lib")
+            #backup the current file, just in case
+            timestampMod = os.path.getmtime(cardLibraryFile)
+            dtMod = datetime.datetime.fromtimestamp(timestampMod)
+            strModDate = dtMod.strftime("%Y%m%d")
+            shutil.copy(cardLibraryFile,DATA_DIR_NAME + strModDate + "-" + os.path.basename(cardLibraryFile) + ".bak")
+            cardLibraryFile = getCardLibrary(cardLibraryFile)
+
+
+    with cardLibraryFile.open() as file:
+            cardLibraryDict = json.load(file)
+
+    return cardLibraryDict
+
+#Figure out the card sort category based on the card name, look up in AllCards lib
+#in:card name
+#out: string category. I organize as White/Black/Blue/Green/Red/Colorless/Land/Gold/Unknown
+def lookupSortCategory(strCardName,dictLib):
+    strSortCategory = "Unknown"
+    dictCard = dictLib.get(strCardName)
+    if dictCard is not None:
+        listColors = dictCard.get("colors",{})
+        if len(listColors) > 1:
+            strSortCategory = "Gold"
+        elif len(listColors) == 1:
+            strSortCategory = listColors[0]
+        elif len(listColors) == 0:#colorless could be Land or other colorless (Art, Eldrazi, whatever)
+            listTypes = dictCard.get("types",{})
+            if "Land" in listTypes:
+                strSortCategory = "Land"
+            else:
+                strSortCategory = "Colorless"
+    else:#maybe if we can't find it there's something special
+        if strCardName.find("//") > -1:#cards with split names are stored weird in AllCards
+            listNames = strCardName.split("//")
+            strSortCategory = lookupSortCategory(listNames[0].strip(), dictLib)
+    return strSortCategory
+
+#perform the merge and post merge clean and prep to ready for processing
+#in-dataframe with today's cards, dataframe with comparison cards
+#out-dataframr ready for processing
+def buildMergeDF(dfNew, dfOld):
+    #merge with a double outer join of old and new
+    dfMergeCards = pandas.merge(dfNew,dfOld,how="outer",on=["Name","Edition","Foil","Condition","Card Number"])
+    dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","CompareCount","Price","ComparePrice"]]
+    dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
+    #dfMergeCards.info()
+    #clean up foil flag
+    dfMergeCards["Foil"].fillna("N",inplace=True)
+    dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
+
+    #clean up null values in old set for new cards, set up a new field for new cards
+    dfMergeCards["OldCount"].fillna(-1,inplace=True)
+    dfMergeCards.eval("IsNew = (OldCount == -1)",inplace=True)
+    dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0 
+    dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
+
+    #clean up null values in new set for deleted cards, set up a new field for deleted cards
+    dfMergeCards["NewCount"].fillna(-1,inplace=True)
+    dfMergeCards.eval("IsGone = (NewCount == -1)",inplace=True)
+    dfMergeCards.loc[dfMergeCards["NewCount"] == -1, "NewCount"] = 0 
+    dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
+
+
+    #add some explicit columns for convenience in the log csv. Don't think I need these ultimately because of querying
+    dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
+    dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
+    dfMergeCards.eval("TotalChange = ((NewPrice*NewCount) - (OldPrice*OldCount))",inplace=True)
+
+    dictCardLibrary = buildCardLibrary()
+    #print(str(len(dictCardLibrary)))
+
+    #set a new column called SortCategory with categories how I organize my cards
+    dfMergeCards["SortCategory"] = dfMergeCards["Name"].apply(lookupSortCategory,args=(dictCardLibrary,))
+
+    dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
+    print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
+    return dfMergeCards
+
+
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
@@ -268,48 +378,13 @@ if Path(DATA_DIR_NAME + strTodayFileName).exists():
 else:
     print("je n'exist pas, donc if faut que je getter le file")
     response = requests.get('https://deckbox.org/sets/export/1016639', headers=headers, params=params, cookies=cookies)
+    response.encoding = "UTF-8"
     #print(response.text)
     todayFile = open(DATA_DIR_NAME + strTodayFileName,"w")
     todayFile.write(response.text)
     todayFile.close()
 
-#now let's make sure that there's the most recent card library in json format
-cardLibraryFile = Path(DATA_DIR_NAME + "AllCards.json")
-debug("magic card lib file:" + str(cardLibraryFile) + ":"+str(cardLibraryFile.exists()))
-cardLibraryDict = None
 
-#if we don't have the file yet, go get it
-if not cardLibraryFile.exists():
-    print("no card db")    
-    cardLibraryFile = getCardLibrary(cardLibraryFile)
-    print("lib file after :" + str(cardLibraryFile))
-
-    #print(cardLibraryDict)
-else:
-    debug("card db exists")
-    
-    #check to make sure is most recent
-    localZipSize = cardLibraryFile.with_suffix(".zip").stat().st_size
-    debug("localZipSize " + str(localZipSize))
-
-    #check the header from json url
-    head = requests.head(MAGIC_CARD_JSON_URL)
-    remoteZipSize = int(head.headers["Content-Length"])
-    debug("remoteZipSize content-length " + str(remoteZipSize))
-    
-    #only fetch if local (from a previous fetch) is a different size
-    if (localZipSize != remoteZipSize):
-        print("not equal size, let's get a fresh card lib")
-        #backup the current file, just in case
-        timestampMod = os.path.getmtime(cardLibraryFile)
-        dtMod = datetime.datetime.fromtimestamp(timestampMod)
-        strModDate = dtMod.strftime("%Y%m%d")
-        shutil.copy(cardLibraryFile,DATA_DIR_NAME + strModDate + "-" + os.path.basename(cardLibraryFile) + ".bak")
-        cardLibraryFile = getCardLibrary(cardLibraryFile)
-
-
-with cardLibraryFile.open() as file:
-        cardLibraryDict = json.load(file)
 
 print("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
 
@@ -329,37 +404,7 @@ dfCompareCards = cleanCardDataFrame(dfCompareCards)
 dfCompareCards = dfCompareCards.rename(index=str,columns={"Count":"CompareCount","Price":"ComparePrice"})
 #dfCompareCards.info()
 
-#merge with a double outer join of old and new
-dfMergeCards = pandas.merge(dfTodaysCards,dfCompareCards,how="outer",on=["Name","Edition","Foil","Condition","Card Number"])
-dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","CompareCount","Price","ComparePrice"]]
-dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
-#dfMergeCards.info()
-#clean up foil flag
-dfMergeCards["Foil"].fillna("N",inplace=True)
-dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
-
-#clean up null values in old set for new cards, set up a new field for new cards
-dfMergeCards["OldCount"].fillna(-1,inplace=True)
-dfMergeCards.eval("IsNew = (OldCount == -1)",inplace=True)
-dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0 
-dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
-
-#clean up null values in new set for deleted cards, set up a new field for deleted cards
-dfMergeCards["NewCount"].fillna(-1,inplace=True)
-dfMergeCards.eval("IsGone = (NewCount == -1)",inplace=True)
-dfMergeCards.loc[dfMergeCards["NewCount"] == -1, "NewCount"] = 0 
-dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
-
-
-#add some explicit columns for convenience in the log csv. Don't think I need these ultimately because of querying
-dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
-dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
-dfMergeCards.eval("TotalChange = ((NewPrice*NewCount) - (OldPrice*OldCount))",inplace=True)
-
-#TODO: merge in org category from card library, since it's not in deckbox file
-
-dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
-print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
+dfMergeCards = buildMergeDF(dfTodaysCards,dfCompareCards) 
 
 #set up a couple of stats dictionaries, 
 #trade changes-dropped-dollar cards,count change, price change, total change, old-count,new-count,old-price,new-price
