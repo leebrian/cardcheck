@@ -17,21 +17,24 @@
 # Goals: learn csv with pandas, http stuff with requests, json stuff
 #
 
-import pandas
-import numpy
 import datetime
-from time import strftime
-import subprocess
-import requests
-import json
-from pathlib import Path
-import zipfile
 import io
-from operator import itemgetter
-import os
+import json
 import logging
-import sys
+import os
 import shutil
+import subprocess
+import sys
+import zipfile
+from operator import itemgetter
+from pathlib import Path
+from time import strftime
+from timeit import default_timer as timer
+
+import pandas
+import requests
+
+dtScriptStart = datetime.datetime.now()
 
 #write a dictionary of http cookies to a local file
 def makeCookies(cookies):
@@ -222,7 +225,7 @@ def printStats(dict, label="Unknown"):
     print("netQuantityChange:" + str(int(totalQuantityChange)) + "; cardsIncreasedValue: " + str(numberPositive) + "; cardsDecreasedValue: " + str(numberNegative))
     print("netPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
 
-#Fetch or build the AllCads library
+#Fetch or build the AllCards library
 #out: dict representation of the AllCards.json file
 def buildCardLibrary():
 
@@ -331,6 +334,14 @@ def buildMergeDF(dfNew, dfOld):
     print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
     return dfMergeCards
 
+#write a new log entry to the run log
+def updateRunLog(
+    strOldFileName,strNewFileName,dictRunLog,dtScriptStart,dtScriptEnd,countBulkToTrades,countBulkToDollar,countDollarToTrades,countDollarToBulk,countTradeToDollar,
+    countTradeToBulk,countNewCards,countGoneCards,countUnchCards):
+    intTotalCardsProcessed = countBulkToTrades+countBulkToDollar+countDollarToTrades+countDollarToBulk+countTradeToDollar+countTradeToBulk+countNewCards+countGoneCards+countUnchCards
+    dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = {"old-file" : strOldFileName, "new-file" : strNewFileName, "bulk-to-trades" : countBulkToTrades, "bulk-to-dollar" : countBulkToDollar, "dollar-to-trades" : countDollarToTrades, "dollar-to-bulk" : countDollarToBulk, "trades-to-dollar" : countTradeToDollar, "trades-to-bulk" : countTradeToBulk, "new-cards" : countNewCards, "gone-cards" : countGoneCards, "unch-cards" : countUnchCards, "total-cards" : intTotalCardsProcessed, "elapsed-time" : (dtScriptEnd.timestamp()-dtScriptStart.timestamp())}
+    print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
+    #writeRunLog(dictRunLog)
 
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
@@ -341,9 +352,8 @@ print("Hello World!!!!")
 
 configureLogging()
 
-#first figure out today's date
-today = datetime.datetime.now()
-strToday = today.strftime("%Y%m%d")
+#reuse the datetime from the perf logger
+strToday = dtScriptStart.strftime("%Y%m%d")
 #print(strToday)
 
 strTodayFileName = strToday+"-magic-cards.csv"
@@ -430,6 +440,7 @@ dictGeneralStats = {}
 
 rowsProcessed = 0
 
+timeLoopStart = timer()
 for index,row in dfMergeCards.iterrows():
     #print(str(index) + ":" + str(row))
     #is this a new card? This should not require any updates. Since new cards are already categorized
@@ -483,6 +494,8 @@ print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMe
       
 debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
 
+
+
 printStats(dictGeneralStats, "Overall")
 printStats(dictNewCards, "NewCards")
 printStats(dictGoneCards, "GoneCards")
@@ -494,7 +507,11 @@ printStats(dictDollarToBulk, "Dollar Downgraded to Bulk Box")
 printStats(dictTradesToDollar, "Trades Downgraded to Dollar Box")
 printStats(dictTradesToBulk, "Trades Downgraded to Bulk Box")
 
+timeLoopEnd = timer()
+print("Total time elapsed for loop: " + str(timeLoopEnd-timeLoopStart))
 
+
+timeQueryStart = timer()
 
 #query for bulk to trades (good)
 dfBulkToTrades = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
@@ -505,9 +522,9 @@ dfDollarToTrades = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRA
 #query for dollar to bulk (bad)
 dfDollarToBulk = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice < 1)")
 #query for trades to dollar (bad)
-dfTradeToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD) +")")
+dfTradesToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD) +")")
 #query for trade to bulk (bad)
-dfTradeToBulk = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice <1)")
+dfTradesToBulk = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice <1)")
 #query for new cards
 dfNewCards = dfMergeCards.query("(IsNew == True)")
 #query for removed cards
@@ -518,22 +535,32 @@ dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" \
     + "| ( ( (OldPrice >= 1) & (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") ) & ( (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD)+") ) )" \
     + "| ( (OldPrice < 1) & (NewPrice < 1) )"\
     +")")
-print("upgrades from bulk to trades: " + str(len(dfBulkToTrades)))
-print("upgrades from bulk to dollar: " + str(len(dfBulkToDollar)))
-print("upgrades from dollar to trades: " + str(len(dfDollarToTrades)))
-print("dowgrades from dollar to bulk: " + str(len(dfDollarToBulk)))
-print("dowgrades from trade to dollar: " + str(len(dfTradeToDollar)))
-print("dowgrades from trade to bulk: " + str(len(dfTradeToBulk)))
-print("new cards: " + str(len(dfNewCards)))
-print("gone cards: " + str(len(dfGoneCards)))
-print("unchanged cards: " + str(len(dfUnchCards)))
-print("total cards from query: " + str(len(dfBulkToTrades)+len(dfBulkToDollar)+len(dfDollarToTrades)+len(dfDollarToBulk)+len(dfTradeToDollar)+len(dfTradeToBulk)+len(dfNewCards)+len(dfGoneCards)+len(dfUnchCards)))
+
+intBulkToTrades = len(dfBulkToTrades)
+print("upgrades from bulk to trades: " + str(intBulkToTrades))
+intBulkToDollar = len(dfBulkToDollar)
+print("upgrades from bulk to dollar: " + str(intBulkToDollar))
+intDollarToTrades = len(dfDollarToTrades)
+print("upgrades from dollar to trades: " + str(intDollarToTrades))
+intDollarToBulk = len(dfDollarToBulk)
+print("dowgrades from dollar to bulk: " + str(intDollarToBulk))
+intTradesToDollar = len(dfTradesToDollar)
+print("dowgrades from trade to dollar: " + str(intTradesToDollar))
+intTradesToBulk = len(dfTradesToBulk)
+print("dowgrades from trade to bulk: " + str(intTradesToBulk))
+intNewCards = len(dfNewCards)
+print("new cards: " + str(intNewCards))
+intGoneCards = len(dfGoneCards)
+print("gone cards: " + str(intGoneCards))
+intUnchCards = len(dfUnchCards)
+print("unchanged cards: " + str(intUnchCards))
+print("total cards from query: " + str(intBulkToTrades+intBulkToDollar+intDollarToTrades+intDollarToBulk+intTradesToDollar+intTradesToBulk+intNewCards+intGoneCards+intUnchCards))
 print("total cards from row by row processing: " + str(len(dictGeneralStats)))
 
-#print(today.strftime("%Y%m%d-%H:%M:%S:%f"))
-dictRunLog[today.strftime("%Y%m%d-%H:%M:%S:%f")] = {"old-file" : strCompareFileName, "new-file" : strTodayFileName}
+timeQueryEnd = timer()
+print("Total time elapsed for query: " + str(timeQueryEnd-timeQueryStart))
 
-#writeRunLog(dictRunLog)
+dtScriptEnd = datetime.datetime.now()
+print("Total time elapsed: " + str(dtScriptEnd.timestamp()-dtScriptStart.timestamp()))
 
-
-
+updateRunLog(strCompareFileName,strTodayFileName,dictRunLog,dtScriptStart, dtScriptEnd, intBulkToTrades,intBulkToDollar,intDollarToTrades,intDollarToBulk,intTradesToDollar,intTradesToBulk,intNewCards,intGoneCards,intUnchCards)
