@@ -1,0 +1,9 @@
+//fill in values from a valid http session, leaving examples in here, but just dump all of cookies, and erase this line
+{
+    "outgoing-smtp" : "XXX",
+    "smtp-port" : 999,
+    "smtp-account-user" : "XXX",
+    "smtp-account-pass" : "XXX",
+    "from-email" : "XXX",
+    "to-email" : "XXX"
+}

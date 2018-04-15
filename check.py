@@ -11,7 +11,7 @@
 #
 # So I have to export from deckbox.org, then compare to old listCardsCSVs
 # Export doesn't have color, so I have to compare to a library fetched from mtgjson.org, if listCardsCSVs aren't found then it probably means
-# I need to update mtgjson.org (TODO:maybe check the filesize against header from https://mtgjson.com/json/AllCards.json.zip)
+# I need to update mtgjson.org 
 # 
 # I'll schedule this to run every month or so
 # Goals: learn csv with pandas, http stuff with requests, json stuff
@@ -23,9 +23,12 @@ import json
 import logging
 import os
 import shutil
+import smtplib
 import subprocess
 import sys
 import zipfile
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from operator import itemgetter
 from pathlib import Path
 from time import strftime
@@ -38,13 +41,13 @@ dtScriptStart = datetime.datetime.now()
 
 #write a dictionary of http cookies to a local file
 def makeCookies(cookies):
-    with open("cookies.json","w") as file:
+    with open(COOKIE_FILE_NAME,"w") as file:
         json.dump(cookies,file)
     return
 
 #read a dictionary of http cookies from a local file
 def eatCookies():
-    with open("cookies.json","r") as file:
+    with open(COOKIE_FILE_NAME,"r") as file:
         return json.load(file)
 
 #go get a card json library, write it to disk, unzip it and return it as a Path
@@ -143,10 +146,15 @@ def determineCompareFile(dictRunLog):
     #print("toCompareFileName: " + str(toCompareFileName))
     return toCompareFileName
 
+#load and return configuration dictionary from JSON and config logging
+def configure():
+    configureLogging()
+    with open(CONFIG_FILE_NAME,"r") as file:
+        return json.load(file)
+
 #set up the logging for printing to the console stream
 def configureLogging():
     logger = logging.getLogger(__name__)
-    
     
     print("Checking arguments, if --debug sent in as argument, then debug log level" + str(sys.argv))
     if (len(sys.argv) > 1):
@@ -164,7 +172,7 @@ def debug(msg):
 
 #Return a unique key based on a row, sortcat+name+edition+condition+foil+cardNumber
 def makeMushedKey(row):
-    return row["SortCategory"]+"-"+row["Name"]+"-"+row["Edition"]+"-"+row["Condition"]+"-"+str(row["Card Number"])+"-"+str(row["Foil"])
+    return row["SortCategory"]+"-"+row["Name"]+"-"+row["Edition"]+"-"+row["Condition"]+"-"+str(row["CardNumber"])+"-"+str(row["IsFoil"])
 
 #Update count/price stats for a row; deltas are calculated from the stats dictionary with mushedKeys as key
 def updateRowStats(row,dictStats):
@@ -224,6 +232,29 @@ def printStats(dict, label="Unknown"):
     print("total items: " + str(len(list)))
     print("netQuantityChange:" + str(int(totalQuantityChange)) + "; cardsIncreasedValue: " + str(numberPositive) + "; cardsDecreasedValue: " + str(numberNegative))
     print("netPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
+
+#returns a string of stats for a card query derived data frame; totalquantity change, total price change, number cards, number up, number down
+def stringStats(df):
+    df = calcStatsDict(df)
+
+    strStats = "total items: {total-items}".format(**df)
+    strStats += " netQuantityChange: {total-quantity-change}; cardsIncreasedValue: {number-positive}; cardsDecreasedValue: {number-negative}".format(**df)
+    strStats += " netPriceChange: ${total-price-change:,.2f}; grossPositive: ${total-gain:,.2f}; grossNegative: ${total-loss:.2f}".format(**df)
+
+    return strStats
+
+#returns a dictionary of a data frame's general stats; totalquantity change, total price change, number cards, number up, number down
+def calcStatsDict(df):
+    totalQuantityChange = df['CountChange'].sum()
+    totalPriceChange = df["TotalChange"].sum()
+    numberNegative = df["TotalChange"].lt(0).sum()
+    numberPositive = df["TotalChange"].gt(0).sum()
+    totalGain = df[df["TotalChange"] > 0]["TotalChange"].sum()
+    totalLoss = df[df["TotalChange"] < 0]["TotalChange"].sum()
+
+    return {"total-items" : len(df), "total-quantity-change" : totalQuantityChange, "total-price-change" : totalPriceChange, "number-negative" : numberNegative, "number-positive" : numberPositive, "total-gain" : totalGain, "total-loss" : totalLoss }
+
+
 
 #Fetch or build the AllCards library
 #out: dict representation of the AllCards.json file
@@ -300,11 +331,11 @@ def buildMergeDF(dfNew, dfOld):
     #merge with a double outer join of old and new
     dfMergeCards = pandas.merge(dfNew,dfOld,how="outer",on=["Name","Edition","Foil","Condition","Card Number"])
     dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","CompareCount","Price","ComparePrice"]]
-    dfMergeCards = dfMergeCards.rename(index=str,columns={"Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
+    dfMergeCards = dfMergeCards.rename(index=str,columns={"Foil":"IsFoil","Card Number":"CardNumber","Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
     #dfMergeCards.info()
     #clean up foil flag
-    dfMergeCards["Foil"].fillna("N",inplace=True)
-    dfMergeCards["Foil"] = dfMergeCards["Foil"].replace("foil","Y")
+    dfMergeCards["IsFoil"].fillna(False,inplace=True)
+    dfMergeCards["IsFoil"] = dfMergeCards["IsFoil"].replace("foil",True)
 
     #clean up null values in old set for new cards, set up a new field for new cards
     dfMergeCards["OldCount"].fillna(-1,inplace=True)
@@ -330,6 +361,11 @@ def buildMergeDF(dfNew, dfOld):
     #set a new column called SortCategory with categories how I organize my cards
     dfMergeCards["SortCategory"] = dfMergeCards["Name"].apply(lookupSortCategory,args=(dictCardLibrary,))
 
+    #reorder the columns how I like them
+    dfMergeCards = dfMergeCards[["SortCategory","Name","Edition","Condition","IsFoil","CardNumber","OldCount","NewCount","OldPrice","NewPrice","IsNew","IsGone","CountChange","PriceChange","TotalChange"]]
+
+    dfMergeCards = dfMergeCards.sort_values(by=["SortCategory","Name"])
+
     dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
     print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
     return dfMergeCards
@@ -343,14 +379,29 @@ def updateRunLog(
     print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
     #writeRunLog(dictRunLog)
 
+#send an email message
+def sendMail(strHTML, dictConfig):
+    server = smtplib.SMTP(host=dictConfig["outgoing-smtp"],port=dictConfig["smtp-port"])
+    server.starttls()
+    server.login(dictConfig["smtp-account-user"],dictConfig["smtp-account-pass"])
+    message = MIMEMultipart()
+    message["from"] = dictConfig["from-email"]
+    message["to"] = dictConfig["to-email"]
+    message["subject"] = "Card comparison, go sort some cards"
+    message.attach(MIMEText(htmlString,"html"))
+    #server.send_message(message)
+    server.quit()
+
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
+CONFIG_FILE_NAME = "config.json"
+COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
 
 print("Hello World!!!!")
 
-configureLogging()
+dictConfig = configure()
 
 #reuse the datetime from the perf logger
 strToday = dtScriptStart.strftime("%Y%m%d")
@@ -511,54 +562,106 @@ timeLoopEnd = timer()
 print("Total time elapsed for loop: " + str(timeLoopEnd-timeLoopStart))
 
 
-timeQueryStart = timer()
+#run the queries needed for reporting
+#return a dictionary of all the query result dataframes, dictionary of stats
+def queryForReports(df):
+    timeQueryStart = timer()
 
-#query for bulk to trades (good)
-dfBulkToTrades = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
-#query for bulk to dollar (good)
-dfBulkToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & ( (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) +") )")
-#query for dollar to trades (good)
-dfDollarToTrades = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
-#query for dollar to bulk (bad)
-dfDollarToBulk = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice < 1)")
-#query for trades to dollar (bad)
-dfTradesToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD) +")")
-#query for trade to bulk (bad)
-dfTradesToBulk = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice <1)")
-#query for new cards
-dfNewCards = dfMergeCards.query("(IsNew == True)")
-#query for removed cards
-dfGoneCards = dfMergeCards.query("(IsGone == True)")
-#query for unch
-dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" \
-    + " ( (OldPrice >= "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= "+str(TRADE_BOX_THRESHOLD)+") )" \
-    + "| ( ( (OldPrice >= 1) & (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") ) & ( (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD)+") ) )" \
-    + "| ( (OldPrice < 1) & (NewPrice < 1) )"\
-    +")")
+    results = {}
+    stats = {}
+    
+    #query for bulk to trades (good)
+    dfBulkToTrades = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
+    results["bulk-to-trades"] = dfBulkToTrades
+    stats["count-bulk-to-trades"] = len(dfBulkToTrades)
 
-intBulkToTrades = len(dfBulkToTrades)
-print("upgrades from bulk to trades: " + str(intBulkToTrades))
-intBulkToDollar = len(dfBulkToDollar)
-print("upgrades from bulk to dollar: " + str(intBulkToDollar))
-intDollarToTrades = len(dfDollarToTrades)
-print("upgrades from dollar to trades: " + str(intDollarToTrades))
-intDollarToBulk = len(dfDollarToBulk)
-print("dowgrades from dollar to bulk: " + str(intDollarToBulk))
-intTradesToDollar = len(dfTradesToDollar)
-print("dowgrades from trade to dollar: " + str(intTradesToDollar))
-intTradesToBulk = len(dfTradesToBulk)
-print("dowgrades from trade to bulk: " + str(intTradesToBulk))
-intNewCards = len(dfNewCards)
-print("new cards: " + str(intNewCards))
-intGoneCards = len(dfGoneCards)
-print("gone cards: " + str(intGoneCards))
-intUnchCards = len(dfUnchCards)
-print("unchanged cards: " + str(intUnchCards))
-print("total cards from query: " + str(intBulkToTrades+intBulkToDollar+intDollarToTrades+intDollarToBulk+intTradesToDollar+intTradesToBulk+intNewCards+intGoneCards+intUnchCards))
+    #query for bulk to dollar (good)
+    dfBulkToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice < 1) & ( (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) +") )")
+    results["bulk-to-dollar"] = dfBulkToDollar
+    stats["count-bulk-to-dollar"] = len(dfBulkToDollar)
+
+    #query for dollar to trades (good)
+    dfDollarToTrades = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice >= "+ str(TRADE_BOX_THRESHOLD)+")")
+    results["dollar-to-trades"] = dfDollarToTrades
+    stats["count-dollar-to-trades"] = len(dfDollarToTrades)
+
+    #query for dollar to bulk (bad)
+    dfDollarToBulk = dfMergeCards.query("(IsNew != True) & ( (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") & (OldPrice >= 1) ) & (NewPrice < 1)")
+    results["dollar-to-bulk"] = dfDollarToBulk
+    stats["count-dollar-to-bulk"] = len(dfDollarToBulk)
+
+    #query for trades to dollar (bad)
+    dfTradesToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD) +")")
+    results["trades-to-dollar"] = dfTradesToDollar
+    stats["count-trades-to-dollar"] = len(dfTradesToDollar)
+
+    #query for trade to bulk (bad)
+    dfTradesToBulk = dfMergeCards.query("(IsNew != True) & (OldPrice > "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice <1)")
+    results["trades-to-bulk"] = dfTradesToBulk
+    stats["count-trades-to-bulk"] = len(dfTradesToBulk)
+
+    #query for new cards
+    dfNewCards = dfMergeCards.query("(IsNew == True)")
+    results["new-cards"] = dfNewCards
+    stats["count-new-cards"] = len(dfNewCards)
+
+    #query for removed cards
+    dfGoneCards = dfMergeCards.query("(IsGone == True)")
+    results["gone-cards"] = dfGoneCards
+    stats["count-gone-cards"] = len(dfGoneCards)
+
+    #query for unch
+    dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" \
+        + " ( (OldPrice >= "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= "+str(TRADE_BOX_THRESHOLD)+") )" \
+        + "| ( ( (OldPrice >= 1) & (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") ) & ( (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD)+") ) )" \
+        + "| ( (OldPrice < 1) & (NewPrice < 1) )"\
+        +")")
+    results["unch-cards"] = dfUnchCards
+    stats["count-unch-cards"] = len(dfUnchCards)
+
+    stats["count-all-results"] = stats["count-unch-cards"]+stats["count-gone-cards"]+stats["count-new-cards"] \
+        +stats["count-trades-to-bulk"]+stats["count-trades-to-dollar"]+stats["count-dollar-to-bulk"]+stats["count-dollar-to-trades"] \
+        +stats["count-bulk-to-dollar"]+stats["count-bulk-to-trades"]
+    timeQueryEnd = timer()
+    print("Total time elapsed for query: " + str(timeQueryEnd-timeQueryStart))
+
+    return results, stats
+
 print("total cards from row by row processing: " + str(len(dictGeneralStats)))
 
-timeQueryEnd = timer()
-print("Total time elapsed for query: " + str(timeQueryEnd-timeQueryStart))
+dictResults, dictResultStats = queryForReports(dfMergeCards)
+
+#all the work is done, now just print the reports, first the changes from bulk
+
+#TODO-replace this with a template file for easier formatting
+htmlStringWriter = io.StringIO()
+htmlStringWriter.write("Total cards processed: <b>" + str(len(dfMergeCards)) +"</b>")
+htmlStringWriter.write("<br/>New cards: <b>" + str(dictResultStats["count-new-cards"]) + "</b>")
+htmlStringWriter.write("<br/>Gone cards: <b>" + str(dictResultStats["count-gone-cards"])  + "</b>")
+htmlStringWriter.write("<br/>Unch cards: <b>" + str(dictResultStats["count-unch-cards"])  + "</b> ")
+htmlStringWriter.write(stringStats(dfMergeCards))
+htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
+htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-dollar"]))
+htmlStringWriter.write(dictResults["trades-to-dollar"].to_html())
+htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-bulk"]))
+htmlStringWriter.write(dictResults["trades-to-bulk"].to_html())
+htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
+htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + stringStats(dictResults["dollar-to-trades"]))
+htmlStringWriter.write(dictResults["dollar-to-trades"].to_html())
+htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + stringStats(dictResults["dollar-to-bulk"]))
+htmlStringWriter.write(dictResults["dollar-to-bulk"].to_html())
+htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
+htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + stringStats(dictResults["bulk-to-trades"]))
+htmlStringWriter.write(dictResults["bulk-to-trades"].to_html())
+htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + stringStats(dictResults["bulk-to-dollar"]))
+htmlStringWriter.write(dictResults["bulk-to-dollar"])
+htmlString = htmlStringWriter.getvalue()
+htmlStringWriter.close()
+
+with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding='utf-8') as file:
+    file.write(htmlString)
+
+sendMail(htmlString, dictConfig)
 
 dtScriptEnd = datetime.datetime.now()
 print("Total time elapsed: " + str(dtScriptEnd.timestamp()-dtScriptStart.timestamp()))
