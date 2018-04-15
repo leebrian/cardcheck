@@ -339,12 +339,14 @@ def buildMergeDF(dfNew, dfOld):
 
     #clean up null values in old set for new cards, set up a new field for new cards
     dfMergeCards["OldCount"].fillna(-1,inplace=True)
+    dfMergeCards["OldCount"] = dfMergeCards["OldCount"].astype("int")
     dfMergeCards.eval("IsNew = (OldCount == -1)",inplace=True)
     dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0 
     dfMergeCards["OldPrice"].fillna(0.0,inplace=True)
 
     #clean up null values in new set for deleted cards, set up a new field for deleted cards
     dfMergeCards["NewCount"].fillna(-1,inplace=True)
+    dfMergeCards["NewCount"] = dfMergeCards["NewCount"].astype("int")
     dfMergeCards.eval("IsGone = (NewCount == -1)",inplace=True)
     dfMergeCards.loc[dfMergeCards["NewCount"] == -1, "NewCount"] = 0 
     dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
@@ -372,195 +374,131 @@ def buildMergeDF(dfNew, dfOld):
 
 #write a new log entry to the run log
 def updateRunLog(
-    strOldFileName,strNewFileName,dictRunLog,dtScriptStart,dtScriptEnd,countBulkToTrades,countBulkToDollar,countDollarToTrades,countDollarToBulk,countTradeToDollar,
-    countTradeToBulk,countNewCards,countGoneCards,countUnchCards):
-    intTotalCardsProcessed = countBulkToTrades+countBulkToDollar+countDollarToTrades+countDollarToBulk+countTradeToDollar+countTradeToBulk+countNewCards+countGoneCards+countUnchCards
-    dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = {"old-file" : strOldFileName, "new-file" : strNewFileName, "bulk-to-trades" : countBulkToTrades, "bulk-to-dollar" : countBulkToDollar, "dollar-to-trades" : countDollarToTrades, "dollar-to-bulk" : countDollarToBulk, "trades-to-dollar" : countTradeToDollar, "trades-to-bulk" : countTradeToBulk, "new-cards" : countNewCards, "gone-cards" : countGoneCards, "unch-cards" : countUnchCards, "total-cards" : intTotalCardsProcessed, "elapsed-time" : (dtScriptEnd.timestamp()-dtScriptStart.timestamp())}
-    print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
+    strOldFileName,strNewFileName,dictRunLog,dtScriptStart,dtScriptEnd,dictResultStats):
+    #intTotalCardsProcessed = countBulkToTrades+countBulkToDollar+countDollarToTrades+countDollarToBulk+countTradeToDollar+countTradeToBulk+countNewCards+countGoneCards+countUnchCards
+    dictLogEntry = {"old-file" : strOldFileName, "new-file" : strNewFileName, "elapsed-time" : (dtScriptEnd.timestamp()-dtScriptStart.timestamp())}
+    dictLogEntry.update(dictResultStats)
+    dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = dictLogEntry
+    #print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
+    #TODO uncomment this when finished debugging
     #writeRunLog(dictRunLog)
 
 #send an email message
 def sendMail(strHTML, dictConfig):
+    #start = datetime.datetime.now().timestamp()
     server = smtplib.SMTP(host=dictConfig["outgoing-smtp"],port=dictConfig["smtp-port"])
+    #print(str(datetime.datetime.now().timestamp()-start))
     server.starttls()
+    #print(str(datetime.datetime.now().timestamp()-start))
     server.login(dictConfig["smtp-account-user"],dictConfig["smtp-account-pass"])
+    #print(str(datetime.datetime.now().timestamp()-start))
     message = MIMEMultipart()
     message["from"] = dictConfig["from-email"]
     message["to"] = dictConfig["to-email"]
     message["subject"] = "Card comparison, go sort some cards"
+    #print(str(datetime.datetime.now().timestamp()-start))
     message.attach(MIMEText(htmlString,"html"))
-    #server.send_message(message)
+    server.send_message(message)
+    #print(str(datetime.datetime.now().timestamp()-start))
     server.quit()
+    #print(str(datetime.datetime.now().timestamp()-start))
+    
+#loops through a merged dataframe, processing for reports
+#I did this initially before seeing that query/eval was quite faster (~.5 for query vs ~2 loop)
+#keeping this as a method as it may be useful for debugging in the future
+def loopDataFrame(df):
+    #set up a couple of stats dictionaries, 
+    #trade changes-dropped-dollar cards,count change, price change, total change, old-count,new-count,old-price,new-price
+    dictTradesToDollar = {}
+    #trade changes-dropped-bulk cards,count change, price change, total change, old-count,new-count,old-price,new-price
+    dictTradesToBulk = {}
+    #dollar changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
+    dictDollarToTrade = {}
+    #dollar changes-dropped-bulk cards, count change, price change, total change, old-count,new-count,old-price,new-price
+    dictDollarToBulk = {}
+    #bulk changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
+    dictBulkToTrade = {}
+    #bulk changes-upped-dollar cards, count change, price change, total change, old-count,new-count,old-price,new-price
+    dictBulktoDollar = {}
+    #new cards
+    dictNewCards = {}
+    #removed cards
+    dictGoneCards = {}
+    #unchanged cards
+    dictUnchangedCards = {}
+    #general stats
+    dictGeneralStats = {}
 
-MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
-DATA_DIR_NAME = "data/"
-RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
-CONFIG_FILE_NAME = "config.json"
-COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
+    rowsProcessed = 0
 
-print("Hello World!!!!")
+    timeLoopStart = timer()
+    for index,row in dfMergeCards.iterrows():
+        #print(str(index) + ":" + str(row))
+        #is this a new card? This should not require any updates. Since new cards are already categorized
+        updateRowStats(row,dictGeneralStats)
+        if row["IsNew"]:
+            debug("New (not in the old file):" + str(row))
+            #dictNewCards[makeMushedKey(row)] = [{"Count":row["NewCount"],"Price":row["NewPrice"]}]
+            updateRowStats(row,dictNewCards)
+            rowsProcessed+=1
+        elif row["IsGone"]:
+            debug("Gone (not in the new file):" + str(row))
+            updateRowStats(row,dictGoneCards)
+            rowsProcessed+=1
+        else:
+            #check for changes to trade
+            if row["NewPrice"] >= TRADE_BOX_THRESHOLD:
+                #print("NewPrice is over $2: " + str(row))
+                if row["OldPrice"] < TRADE_BOX_THRESHOLD: #if new>2&old<2,this means new item for trade box
+                    if row["OldPrice"] < 1: #if new>2&old<1,upgrade from bulk
+                        updateRowStats(row,dictBulkToTrade)
+                    else:#if it's not going to trade then it's going to dollar
+                        updateRowStats(row,dictDollarToTrade)
+                    rowsProcessed+=1
+                else:#if new>2,old>2, then don't do anything (ie, no change) 
+                    updateRowStats(row,dictUnchangedCards)
+                    rowsProcessed+=1
+            #change for changes to dollar
+            elif row["NewPrice"] >= 1:
+                if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new>1&old>2, downgrade from trades to dollar
+                    updateRowStats(row,dictTradesToDollar)
+                    rowsProcessed+=1
+                elif row["OldPrice"] < 1:#if new>1&old<1, upgrade from bulk to dollar
+                    updateRowStats(row,dictBulktoDollar)
+                    rowsProcessed+=1
+                else:#if new>1&old>1, do nothing (ie, no change)
+                    updateRowStats(row,dictUnchangedCards)
+                    rowsProcessed+=1
+            #check for downgrades to bulk
+            elif row["NewPrice"] < 1:
+                if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new<1&old>2, downgrade from trades to bulk
+                    updateRowStats(row,dictTradesToBulk)
+                    rowsProcessed+=1
+                elif row["OldPrice"] >= 1:#if new<1&old>1, downgrade from dollar to bulk
+                    updateRowStats(row,dictDollarToBulk)
+                    rowsProcessed+=1
+                else:#if new<1&old<1, do nothing (ie, no change)
+                    updateRowStats(row,dictUnchangedCards)
+                    rowsProcessed+=1
+                
+    debug("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMergeCards)) + ")")
+        
+    debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
 
-dictConfig = configure()
+    printStats(dictGeneralStats, "Overall")
+    printStats(dictNewCards, "NewCards")
+    printStats(dictGoneCards, "GoneCards")
+    printStats(dictUnchangedCards, "UnchangedCards")
+    printStats(dictBulkToTrade, "Bulk Upgraded to Trade Box")
+    printStats(dictBulktoDollar, "Bulk Upgraded to Dollar Box")
+    printStats(dictDollarToTrade, "Dollar Upgraded to Trade Box")
+    printStats(dictDollarToBulk, "Dollar Downgraded to Bulk Box")
+    printStats(dictTradesToDollar, "Trades Downgraded to Dollar Box")
+    printStats(dictTradesToBulk, "Trades Downgraded to Bulk Box")
 
-#reuse the datetime from the perf logger
-strToday = dtScriptStart.strftime("%Y%m%d")
-#print(strToday)
-
-strTodayFileName = strToday+"-magic-cards.csv"
-print("CSV that I want for today: " + strTodayFileName)
-
-#now call out to deckbox.org to get inventory as csv, this command is dumped from firefox and seems to work
-#found this code from handy site https://curl.trillworks.com/
-#cookies are private to my account, so I want to read and write them from my local file that doesn't get committed
-cookies = eatCookies()
-
-headers = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Connection': 'keep-alive',
-    'Host': 'deckbox.org',
-    'Referer': 'https://deckbox.org/sets/1016639',
-    'Upgrade-Insecure-Requests': '1',
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:59.0) Gecko/20100101 Firefox/59.0',
-}
-
-params = (
-    ('format', 'csv'),
-    ('f', ''),
-    ('s', ''),
-    ('o', ''),
-    ('columns', 'Price,Rarity,Color'),
-)
-
-#if there's no file for today, then go get it
-if Path(DATA_DIR_NAME + strTodayFileName).exists():
-    print("j'exist, donc il ne faut que je getter le file")
-else:
-    print("je n'exist pas, donc if faut que je getter le file")
-    response = requests.get('https://deckbox.org/sets/export/1016639', headers=headers, params=params, cookies=cookies)
-    response.encoding = "UTF-8"
-    #print(response.text)
-    todayFile = open(DATA_DIR_NAME + strTodayFileName,"w")
-    todayFile.write(response.text)
-    todayFile.close()
-
-
-
-print("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
-
-#get today's file
-dfTodaysCards = pandas.read_csv(DATA_DIR_NAME + strTodayFileName)
-dfTodaysCards = cleanCardDataFrame(dfTodaysCards)
-
-#getting older file is a bit trickier, check the run log, find the most recent run, find the old file used, get the next recent old file to compare with
-dictRunLog = readRunLog()
-
-strCompareFileName = determineCompareFile(dictRunLog)
-print("ToCompareAgainst: " + strCompareFileName)
-
-dfCompareCards = pandas.read_csv(DATA_DIR_NAME + strCompareFileName)
-dfCompareCards = cleanCardDataFrame(dfCompareCards)
-#dfTodaysCards.info()
-dfCompareCards = dfCompareCards.rename(index=str,columns={"Count":"CompareCount","Price":"ComparePrice"})
-#dfCompareCards.info()
-
-dfMergeCards = buildMergeDF(dfTodaysCards,dfCompareCards) 
-
-#set up a couple of stats dictionaries, 
-#trade changes-dropped-dollar cards,count change, price change, total change, old-count,new-count,old-price,new-price
-dictTradesToDollar = {}
-#trade changes-dropped-bulk cards,count change, price change, total change, old-count,new-count,old-price,new-price
-dictTradesToBulk = {}
-#dollar changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
-dictDollarToTrade = {}
-#dollar changes-dropped-bulk cards, count change, price change, total change, old-count,new-count,old-price,new-price
-dictDollarToBulk = {}
-#bulk changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
-dictBulkToTrade = {}
-#bulk changes-upped-dollar cards, count change, price change, total change, old-count,new-count,old-price,new-price
-dictBulktoDollar = {}
-#new cards
-dictNewCards = {}
-#removed cards
-dictGoneCards = {}
-#unchanged cards
-dictUnchangedCards = {}
-#general stats
-dictGeneralStats = {}
-
-rowsProcessed = 0
-
-timeLoopStart = timer()
-for index,row in dfMergeCards.iterrows():
-    #print(str(index) + ":" + str(row))
-    #is this a new card? This should not require any updates. Since new cards are already categorized
-    updateRowStats(row,dictGeneralStats)
-    if row["IsNew"]:
-        debug("New (not in the old file):" + str(row))
-        #dictNewCards[makeMushedKey(row)] = [{"Count":row["NewCount"],"Price":row["NewPrice"]}]
-        updateRowStats(row,dictNewCards)
-        rowsProcessed+=1
-    elif row["IsGone"]:
-        debug("Gone (not in the new file):" + str(row))
-        updateRowStats(row,dictGoneCards)
-        rowsProcessed+=1
-    else:
-        #check for changes to trade
-        if row["NewPrice"] >= TRADE_BOX_THRESHOLD:
-            #print("NewPrice is over $2: " + str(row))
-            if row["OldPrice"] < TRADE_BOX_THRESHOLD: #if new>2&old<2,this means new item for trade box
-                if row["OldPrice"] < 1: #if new>2&old<1,upgrade from bulk
-                    updateRowStats(row,dictBulkToTrade)
-                else:#if it's not going to trade then it's going to dollar
-                    updateRowStats(row,dictDollarToTrade)
-                rowsProcessed+=1
-            else:#if new>2,old>2, then don't do anything (ie, no change) 
-                updateRowStats(row,dictUnchangedCards)
-                rowsProcessed+=1
-        #change for changes to dollar
-        elif row["NewPrice"] >= 1:
-            if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new>1&old>2, downgrade from trades to dollar
-                updateRowStats(row,dictTradesToDollar)
-                rowsProcessed+=1
-            elif row["OldPrice"] < 1:#if new>1&old<1, upgrade from bulk to dollar
-                updateRowStats(row,dictBulktoDollar)
-                rowsProcessed+=1
-            else:#if new>1&old>1, do nothing (ie, no change)
-                updateRowStats(row,dictUnchangedCards)
-                rowsProcessed+=1
-        #check for downgrades to bulk
-        elif row["NewPrice"] < 1:
-            if row["OldPrice"] >= TRADE_BOX_THRESHOLD:#if new<1&old>2, downgrade from trades to bulk
-                updateRowStats(row,dictTradesToBulk)
-                rowsProcessed+=1
-            elif row["OldPrice"] >= 1:#if new<1&old>1, downgrade from dollar to bulk
-                updateRowStats(row,dictDollarToBulk)
-                rowsProcessed+=1
-            else:#if new<1&old<1, do nothing (ie, no change)
-                updateRowStats(row,dictUnchangedCards)
-                rowsProcessed+=1
-            
-print("total rows processed: " + str(rowsProcessed) + " out of (" + str(len(dfMergeCards)) + ")")
-      
-debug("dictNewCards: " + str(len(dictNewCards))+str(dictNewCards))     
-
-
-
-printStats(dictGeneralStats, "Overall")
-printStats(dictNewCards, "NewCards")
-printStats(dictGoneCards, "GoneCards")
-printStats(dictUnchangedCards, "UnchangedCards")
-printStats(dictBulkToTrade, "Bulk Upgraded to Trade Box")
-printStats(dictBulktoDollar, "Bulk Upgraded to Dollar Box")
-printStats(dictDollarToTrade, "Dollar Upgraded to Trade Box")
-printStats(dictDollarToBulk, "Dollar Downgraded to Bulk Box")
-printStats(dictTradesToDollar, "Trades Downgraded to Dollar Box")
-printStats(dictTradesToBulk, "Trades Downgraded to Bulk Box")
-
-timeLoopEnd = timer()
-print("Total time elapsed for loop: " + str(timeLoopEnd-timeLoopStart))
-
+    timeLoopEnd = timer()
+    print("total cards from row by row processing: " + str(len(dictGeneralStats)))
+    print("Total time elapsed for loop: " + str(timeLoopEnd-timeLoopStart))
 
 #run the queries needed for reporting
 #return a dictionary of all the query result dataframes, dictionary of stats
@@ -610,7 +548,7 @@ def queryForReports(df):
     results["gone-cards"] = dfGoneCards
     stats["count-gone-cards"] = len(dfGoneCards)
 
-    #query for unch
+    #query for unch- these are cards with no need to be moved from their location
     dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" \
         + " ( (OldPrice >= "+str(TRADE_BOX_THRESHOLD)+") & (NewPrice >= "+str(TRADE_BOX_THRESHOLD)+") )" \
         + "| ( ( (OldPrice >= 1) & (OldPrice < "+str(TRADE_BOX_THRESHOLD)+") ) & ( (NewPrice >= 1) & (NewPrice < "+str(TRADE_BOX_THRESHOLD)+") ) )" \
@@ -627,43 +565,159 @@ def queryForReports(df):
 
     return results, stats
 
-print("total cards from row by row processing: " + str(len(dictGeneralStats)))
+#if a file for today doesn't exist, go fetch it from Deckbox and write it to strTodayFileName
+#after this function, strTodayFileName should always exist
+def fetchAndWriteDeckboxLibrary(strTodayFileName) :
+
+    #now call out to deckbox.org to get inventory as csv, this command is dumped from firefox and seems to work
+    #found this code from handy site https://curl.trillworks.com/
+    #cookies are private to my account, so I want to read and write them from my local file that doesn't get committed
+    cookies = eatCookies()
+
+    headers = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Host': 'deckbox.org',
+        'Referer': 'https://deckbox.org/sets/1016639',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:59.0) Gecko/20100101 Firefox/59.0',
+    }
+
+    params = (
+        ('format', 'csv'),
+        ('f', ''),
+        ('s', ''),
+        ('o', ''),
+        ('columns', 'Price,Rarity,Color'),
+    )
+
+    #if there's no file for today, then go get it
+    if Path(DATA_DIR_NAME + strTodayFileName).exists():
+        print("j'exist, donc il ne faut que je getter le file")
+    else:
+        print("je n'exist pas, donc if faut que je getter le file")
+        response = requests.get('https://deckbox.org/sets/export/1016639', headers=headers, params=params, cookies=cookies)
+        response.encoding = "UTF-8"
+        #print(response.text)
+        todayFile = open(DATA_DIR_NAME + strTodayFileName,"w")
+        todayFile.write(response.text)
+        todayFile.close()
+
+MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
+DATA_DIR_NAME = "data/"
+RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
+CONFIG_FILE_NAME = "config.json"
+COOKIE_FILE_NAME = "cookies.json"
+TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
+
+print("Hello World!!!!")
+
+dictConfig = configure()
+
+#reuse the datetime from the perf logger
+strToday = dtScriptStart.strftime("%Y%m%d")
+#print(strToday)
+
+strTodayFileName = strToday+"-magic-cards.csv"
+print("CSV that I want for today: " + strTodayFileName)
+
+fetchAndWriteDeckboxLibrary(strTodayFileName)
+
+print("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
+
+#get today's file
+dfTodaysCards = pandas.read_csv(DATA_DIR_NAME + strTodayFileName)
+dfTodaysCards = cleanCardDataFrame(dfTodaysCards)
+
+#getting older file is a bit trickier, check the run log, find the most recent run, find the old file used, get the next recent old file to compare with
+dictRunLog = readRunLog()
+
+strCompareFileName = determineCompareFile(dictRunLog)
+print("ToCompareAgainst: " + strCompareFileName)
+
+dfCompareCards = pandas.read_csv(DATA_DIR_NAME + strCompareFileName)
+dfCompareCards = cleanCardDataFrame(dfCompareCards)
+#dfTodaysCards.info()
+dfCompareCards = dfCompareCards.rename(index=str,columns={"Count":"CompareCount","Price":"ComparePrice"})
+#dfCompareCards.info()
+
+dfMergeCards = buildMergeDF(dfTodaysCards,dfCompareCards) 
 
 dictResults, dictResultStats = queryForReports(dfMergeCards)
 
 #all the work is done, now just print the reports, first the changes from bulk
 
+import re
+
+#returns a temp dataframe with all columns renamed to have spaces before capital letters, this lets html line break the headers
+def renameColsForHTML(df):
+    #dictResults["trades-to-dollar"].rename(columns=lambda x: ' '.join(x.replace('_', ' ')[i:i+L] for i in range(0,len(x),L)) if df[x].dtype in ['float64','int64'] else x )    
+    #for every capital letter except the first, replace it with " " plus itself
+    return df.rename(columns=lambda x: re.sub("(?<!^)(?=[A-Z])",lambda y: " " + y.group(0),x),inplace=False)
+
+#returns formatted html string from dataframe using the conventions of my reports
+#basically I want left-aligned, wrapping column headers, links for card names, currency formatted, green background for positive
+def toHTMLDefaulter(df):
+    goodColor = "#8FBC8F"
+    badColor = "#E9967A"
+    formattedDF = renameColsForHTML(df)
+    formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
+    formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
+    formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
+    html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
+    #print(html)
+    return html
+
 #TODO-replace this with a template file for easier formatting
+pandas.set_option('display.max_colwidth', -1)#since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
 htmlStringWriter = io.StringIO()
+htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
+htmlStringWriter.write("<h2>Comparing " + strTodayFileName + " to " + strCompareFileName +"</h2>")
 htmlStringWriter.write("Total cards processed: <b>" + str(len(dfMergeCards)) +"</b>")
 htmlStringWriter.write("<br/>New cards: <b>" + str(dictResultStats["count-new-cards"]) + "</b>")
 htmlStringWriter.write("<br/>Gone cards: <b>" + str(dictResultStats["count-gone-cards"])  + "</b>")
-htmlStringWriter.write("<br/>Unch cards: <b>" + str(dictResultStats["count-unch-cards"])  + "</b> ")
+htmlStringWriter.write("<br/>Unchanged cards: <b>" + str(dictResultStats["count-unch-cards"])  + "</b> ")
+htmlStringWriter.write("<br/>Positive card shifts: ")
+htmlStringWriter.write("<b>" + str(dictResultStats["count-bulk-to-dollar"]+dictResultStats["count-bulk-to-trades"]+dictResultStats["count-dollar-to-trades"]) + "</b> ")
+htmlStringWriter.write("(")
+htmlStringWriter.write("From Dollar to Trades: <b>" + str(dictResultStats["count-dollar-to-trades"]) + "</b>; ")
+htmlStringWriter.write("From Bulk to Trades: <b>" + str(dictResultStats["count-bulk-to-trades"]) + "</b>; ")
+htmlStringWriter.write("From Bulk to Dollar: <b>" + str(dictResultStats["count-bulk-to-dollar"]) + "</b> ")
+htmlStringWriter.write(")")
+htmlStringWriter.write("<br/>Negative card shifts: ")
+htmlStringWriter.write("<b>" + str(dictResultStats["count-trades-to-dollar"]+dictResultStats["count-trades-to-bulk"]+dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+htmlStringWriter.write("(")
+htmlStringWriter.write("From Trades to Dollar: <b>" + str(dictResultStats["count-trades-to-dollar"]) + "</b>; ")
+htmlStringWriter.write("From Trades to Bulk: <b>" + str(dictResultStats["count-trades-to-bulk"]) + "</b>; ")
+htmlStringWriter.write("From Dollar to Bulk: <b>" + str(dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+htmlStringWriter.write(")")
+htmlStringWriter.write("<br/>")
 htmlStringWriter.write(stringStats(dfMergeCards))
 htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
 htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-dollar"]))
-htmlStringWriter.write(dictResults["trades-to-dollar"].to_html())
+htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
 htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-bulk"]))
-htmlStringWriter.write(dictResults["trades-to-bulk"].to_html())
+htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-bulk"]))
 htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
 htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + stringStats(dictResults["dollar-to-trades"]))
-htmlStringWriter.write(dictResults["dollar-to-trades"].to_html())
+htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
 htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + stringStats(dictResults["dollar-to-bulk"]))
-htmlStringWriter.write(dictResults["dollar-to-bulk"].to_html())
+htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-bulk"]))
 htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
 htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + stringStats(dictResults["bulk-to-trades"]))
-htmlStringWriter.write(dictResults["bulk-to-trades"].to_html())
+htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
 htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + stringStats(dictResults["bulk-to-dollar"]))
-htmlStringWriter.write(dictResults["bulk-to-dollar"])
+htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-dollar"]))
 htmlString = htmlStringWriter.getvalue()
 htmlStringWriter.close()
 
 with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding='utf-8') as file:
     file.write(htmlString)
 
-sendMail(htmlString, dictConfig)
+#sendMail(htmlString, dictConfig)
 
 dtScriptEnd = datetime.datetime.now()
 print("Total time elapsed: " + str(dtScriptEnd.timestamp()-dtScriptStart.timestamp()))
 
-updateRunLog(strCompareFileName,strTodayFileName,dictRunLog,dtScriptStart, dtScriptEnd, intBulkToTrades,intBulkToDollar,intDollarToTrades,intDollarToBulk,intTradesToDollar,intTradesToBulk,intNewCards,intGoneCards,intUnchCards)
+updateRunLog(strCompareFileName,strTodayFileName,dictRunLog,dtScriptStart, dtScriptEnd, dictResultStats)
