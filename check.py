@@ -15,6 +15,8 @@
 # 
 # I'll schedule this to run every month or so
 # Goals: learn csv with pandas, http stuff with requests, json stuff
+# Thanks to - https://deckbox.org/help/tooltips tooltip library
+#TODO - figure out much change is from new stuff, this is interesting for a different reason
 #
 
 import datetime
@@ -675,7 +677,7 @@ def toHTMLDefaulter(df):
     formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
     formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
     formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
-    formattedDF = formattedDF.rename(index=str,columns={"Sort Category":"Sort","Condition":"Cond","Is Foil":"Foil","Card Number":"Card#","Old Count":"Old#","New Count":"New#","Old Price":"Old$","New Price":"New$","Is New":"New","Is Gone":"Del","Count Change":"\u0394Q","Price Change":"\u0394$","Total Change":"\u03a3\u0394$"},inplace=False)
+    formattedDF = formattedDF.rename(index=str,columns={"Sort Category":"Sort","Condition":"Cond","Is Foil":"Foil","Card Number":"Card#","Old Count":"Old#","New Count":"New#","Old Price":"Old$","New Price":"New$","Is New":"New","Is Gone":"Del","Count Change":"\u0394" + "Q","Price Change":"\u0394" + "$","Total Change":"\u03a3\u0394$"},inplace=False)
     #print(str(formattedDF))
     html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
     #print(html)
@@ -717,14 +719,18 @@ def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
 
     #TODO-replace this with a template file for easier formatting
     pandas.set_option('display.max_colwidth', -1)#since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
-    htmlStringWriter = io.StringIO()
-    htmlStringWriter.write("<html><style>.dataframe,body{" + cssInlineStyle + "}</style>")
-    htmlStringWriter.write("<body>")
-    htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
     strPrettyTodayFileName = strTodayFileName.split("-")[0]
     strPrettyTodayFileName = datetime.date(int(strPrettyTodayFileName[0:4]),int(strPrettyTodayFileName[4:6]),int(strPrettyTodayFileName[6:8])).strftime("%B %d, %Y")
     strPrettyOldFileName = strOldFileName.split("-")[0]
     strPrettyOldFileName = datetime.date(int(strPrettyOldFileName[0:4]),int(strPrettyOldFileName[4:6]),int(strPrettyOldFileName[6:8])).strftime("%B %d, %Y")
+    htmlStringWriter = io.StringIO()
+    htmlStringWriter.write("<html><head>")
+    htmlStringWriter.write("<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">")
+    htmlStringWriter.write("<title>Brian's Card Report for " + strPrettyTodayFileName + "</title>")
+    htmlStringWriter.write("<script src=\"https://deckbox.org/assets/external/tooltip.js\" charset=\"utf-8\"></script>")
+    htmlStringWriter.write("<style>.dataframe,body{" + cssInlineStyle + "}</style></head>")
+    htmlStringWriter.write("<body class=\"\">")
+    htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
     htmlStringWriter.write("<h2>" + strPrettyTodayFileName + " with " + strPrettyOldFileName +"</h2>")
     htmlStringWriter.write("<table border=0 class=\"dataframe\" style=\"font-size : 18px\">")
     htmlStringWriter.write("<tr><td>")
@@ -825,7 +831,7 @@ dictResults, dictResultStats = queryForReports(dfMergeCards)
 #all the work is done, now just print the reports, first the changes from bulk
 htmlString = buildHTMLReport(dfMergeCards,dictResults,dictResultStats)
 
-with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding="utf-16") as file:
+with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding="utf-8") as file:
     file.write(htmlString)
 
 sendMail(htmlString, dictConfig)
