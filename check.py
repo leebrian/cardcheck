@@ -22,6 +22,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import smtplib
 import subprocess
@@ -33,7 +34,6 @@ from operator import itemgetter
 from pathlib import Path
 from time import strftime
 from timeit import default_timer as timer
-import re
 
 import pandas
 import requests
