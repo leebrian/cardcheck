@@ -33,6 +33,7 @@ from operator import itemgetter
 from pathlib import Path
 from time import strftime
 from timeit import default_timer as timer
+import re
 
 import pandas
 import requests
@@ -95,15 +96,16 @@ def readRunLog():
 
 #write out the runLog, runlog has when-run (YYYYMMDDHHMMSS), old-file, new-file
 #overwriting this file every time kind of worries me, so I'm going to read the current file, merge over it with what is passed and write combined back out
-def writeRunLog(dictRunLogIn):
+def writeRunLog(strTimestampKey,dictLogEntry):
     debug("writing the log")
     dictRunLog = readRunLog()
-    dictRunLog.update(dictRunLogIn)
+    dictRunLog[strTimestampKey] = dictLogEntry
     with open(RUN_LOG_FILE_NAME,"w") as file:
         json.dump(dictRunLog,file)
-    return
+
 
 #figure out what the right file is to compare current file to, pass in fun file dict, return a file that exists in data
+#the compare file should be the oldest, or the "new-file" from the last run log
 def determineCompareFile(dictRunLog):
     #sort run log by old-file
     dictRunLog = sorted(dictRunLog.items(),key=itemgetter(0))
@@ -111,15 +113,18 @@ def determineCompareFile(dictRunLog):
     #print("size run log: " + str(runLogSize)+ str(dictRunLog) + "::::" + str(dictRunLog[runLogSize-1][1]["old-file"]))
 
     lastCompared = None
+    lastNew = None
 
     #get the last item in the run log to find the last old-file 
     if runLogSize > 0:
         lastCompared = dictRunLog[runLogSize-1][1]["old-file"]
+        lastNew = dictRunLog[runLogSize-1][1]["new-file"]
 
     print("LastCompared: "+str(lastCompared))
+    print("LastNewFile: " +str(lastNew))
 
     #find all the csvs in data/
-    listCardsCSVs = list(filter(lambda x: str(x).endswith(".csv"),os.listdir(DATA_DIR_NAME)))
+    listCardsCSVs = list(filter(lambda x: str(x).endswith("magic-cards.csv"),os.listdir(DATA_DIR_NAME)))
     #sort them all, oldest to newest by file name
     listCardsCSVs = sorted(listCardsCSVs)
 
@@ -127,22 +132,33 @@ def determineCompareFile(dictRunLog):
 
     #find the lastCompared in list, default to -1 if no match
     indexLastCompared = None
+    indexLastNew = None
     try:
         indexLastCompared = listCardsCSVs.index(lastCompared)
+        indexLastNew = listCardsCSVs.index(lastNew)
     except ValueError:
         indexLastCompared = -1
+        indexLastNew = -1
 
-    debug("indexLastCompared: (-1 means I've never compared this file) " + str(indexLastCompared))
+    #print("indexLastCompared: (-1 means I've never compared this file) " + str(indexLastCompared))
+    print("indexLastNew: (-1 means I've never compared this file) " + str(indexLastNew))
+
+    #if there's no last new match in the directory, use the oldest
+    if (indexLastNew == -1):
+        toCompareFileName = listCardsCSVs[0]
+    else:
+        toCompareFileName = lastNew
+
 
     #Check the next card csv file up chronologically
-    indexToCompare = indexLastCompared+1
+    #indexToCompare = indexLastCompared+1
     #there should not be a situation where there's not a file after the last compared, but if so, just run against the latest file
-    if (indexToCompare >= len(listCardsCSVs)):
-        indexToCompare = len(listCardsCSVs)-1
+    #if (indexToCompare >= len(listCardsCSVs)):
+    #    indexToCompare = len(listCardsCSVs)-1
 
-    debug("indexToCompare" + str(indexToCompare))
+    #debug("indexToCompare" + str(indexToCompare))
 
-    toCompareFileName = listCardsCSVs[indexToCompare]
+    #toCompareFileName = listCardsCSVs[indexToCompare]
     #print("toCompareFileName: " + str(toCompareFileName))
     return toCompareFileName
 
@@ -214,47 +230,89 @@ def updateRowStats(row,dictStats):
 def printStats(dict, label="Unknown"):
     print("Stats for [" + label + "]")
     list = dict.values()
-    totalQuantityChange = sum(item["count-change"] for item in list)
-    totalPriceChange = sum(item["total-change"] for item in list)
-    numberNegative = 0
-    numberPositive = 0
+    netInventoryQuantityChange = sum(item["count-change"] for item in list)
+    netValueChange = sum(item["total-change"] for item in list)
+    quantityChangeNegative = 0
+    quantityChangePositive = 0
     totalGain = 0.0
     totalLoss = 0.0
 
     for item in list:
         if item["total-change"] > 0:
-            numberPositive+=1
+            quantityChangePositive+=1
             totalGain+=item["total-change"]
         if item["total-change"] < 0:
-            numberNegative +=1
+            quantityChangeNegative +=1
             totalLoss+=item["total-change"]
 
     print("total items: " + str(len(list)))
-    print("netQuantityChange:" + str(int(totalQuantityChange)) + "; cardsIncreasedValue: " + str(numberPositive) + "; cardsDecreasedValue: " + str(numberNegative))
-    print("netPriceChange: " + "${:,.2f}".format(totalPriceChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
+    print("netInventoryQuantityChange:" + str(int(netInventoryQuantityChange)) + "; cardsIncreasedValue: " + str(quantityChangePositive) + "; cardsDecreasedValue: " + str(quantityChangeNegative))
+    print("netValueChange: " + "${:,.2f}".format(netValueChange) + "; grossPositive: " + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
 
 #returns a string of stats for a card query derived data frame; totalquantity change, total price change, number cards, number up, number down
 def stringStats(df):
     df = calcStatsDict(df)
 
-    strStats = "total items: {total-items}".format(**df)
-    strStats += " netQuantityChange: {total-quantity-change}; cardsIncreasedValue: {number-positive}; cardsDecreasedValue: {number-negative}".format(**df)
-    strStats += " netPriceChange: ${total-price-change:,.2f}; grossPositive: ${total-gain:,.2f}; grossNegative: ${total-loss:.2f}".format(**df)
+    strStats = "Total cards: {total-cards} ({total-inventory} inv, net: {net-inventory-change-quantity}).".format(**df)
+    strStats += " Changed quantity: {number-change-quantity}; Net: {net-change-quantity} ({net-inventory-change-quantity} inv). Gross increased: {count-positive-quantity}; Gross decreased: {count-negative-quantity}.".format(**df)
+    strStats += " Changed price: {number-change-price} ({number-inventory-change-price} inv); Net: {net-change-price} ({net-inventory-change-price} inv). Gross increased: {count-positive-price} ({total-inventory-price-positive} inv); Gross decreased: {count-negative-price} ({total-inventory-price-positive} inv).".format(**df)
+    strStats += " Total inventory value: ${total-value:,.2f}; Net value change: ${net-value-change:,.2f} (positive: ${total-gain:,.2f}; negative: ${total-loss:.2f}).".format(**df)
 
     return strStats
 
+#sometimes I want a dataframe's stats formatted up for html
+def htmlStats(df):
+    df = calcStatsDict(df)
+
+    html = "<table border=1 class=\"dataframe\" style=\"font-size : 16px\">"
+    html += "<tr><td>"
+    html += "Total cards:</td><td colspan=2> {total-cards} ({total-inventory} inv, net: {net-inventory-change-quantity}).".format(**df)
+    html += "</td></tr>"
+    html += "<tr><td>"
+    html += "Changed quantity:</td><td> {number-change-quantity}; Net: {net-change-quantity} ({net-inventory-change-quantity} inv).</td><td>Gross increased: {count-positive-quantity}; Gross decreased: {count-negative-quantity}.".format(**df)
+    html += "</td></tr>"
+    html += "<tr><td>"
+    html += "Changed price:</td><td> {number-change-price} ({number-inventory-change-price} inv); Net: {net-change-price} ({net-inventory-change-price} inv).</td><td>Gross increased: {count-positive-price} ({total-inventory-price-positive} inv); Gross decreased: {count-negative-price} ({total-inventory-price-negative} inv).".format(**df)
+    html += "</td></tr>"
+    html += "<tr><td>"
+    html += " Total inventory value:</td><td> ${total-value:,.2f}.</td><td>Net value change: ${net-value-change:,.2f} (positive: ${total-gain:,.2f}; negative: ${total-loss:.2f}).".format(**df)
+    html += "</td></tr></table>"
+    
+    return html
+
 #returns a dictionary of a data frame's general stats; totalquantity change, total price change, number cards, number up, number down
 def calcStatsDict(df):
-    totalQuantityChange = df['CountChange'].sum()
-    totalPriceChange = df["TotalChange"].sum()
-    numberNegative = df["TotalChange"].lt(0).sum()
-    numberPositive = df["TotalChange"].gt(0).sum()
+    netInventoryQuantityChange = df["CountChange"].sum()
+    quantityChangeNegative = df[df["CountChange"] < 0]["CountChange"].count()
+    quantityChangePositive = df[df["CountChange"] > 0]["CountChange"].count()
+    totalChangeQuantity = quantityChangeNegative + quantityChangePositive
+    netChangeQuantity = quantityChangePositive - quantityChangeNegative
+    
+    priceChangeNegative = df[df["OldPrice"] > df["NewPrice"]]["NewCount"].count()
+    priceChangePositive = df[df["OldPrice"] < df["NewPrice"]]["NewCount"].count()
+    totalPriceChange = priceChangeNegative + priceChangePositive
+    netPriceChange = priceChangePositive - priceChangeNegative
+    totalInventoryPriceChangeNegative = df[df["OldPrice"] > df["NewPrice"]]["NewCount"].sum()
+    totalInventoryPriceChangePositive = df[df["OldPrice"] < df["NewPrice"]]["NewCount"].sum()
+    totalInventoryPriceChange = totalInventoryPriceChangeNegative + totalInventoryPriceChangePositive
+    netInventoryPriceChange = totalInventoryPriceChangePositive - totalInventoryPriceChangeNegative
+    
+    totalInventory = df["NewCount"].sum()
+    
+    totalValue = df.eval("NewCount*NewPrice").sum()
+    netValueChange = df["TotalChange"].sum()
     totalGain = df[df["TotalChange"] > 0]["TotalChange"].sum()
     totalLoss = df[df["TotalChange"] < 0]["TotalChange"].sum()
 
-    return {"total-items" : len(df), "total-quantity-change" : totalQuantityChange, "total-price-change" : totalPriceChange, "number-negative" : numberNegative, "number-positive" : numberPositive, "total-gain" : totalGain, "total-loss" : totalLoss }
-
-
+    return {"total-cards" : len(df), "total-inventory": totalInventory,
+        "number-change-quantity" : totalChangeQuantity, "net-change-quantity" : netChangeQuantity, 
+        "net-inventory-change-quantity" : netInventoryQuantityChange,
+        "count-negative-quantity" : quantityChangeNegative, "count-positive-quantity" : quantityChangePositive,
+        "count-negative-price" : priceChangeNegative, "count-positive-price" : priceChangePositive,
+        "number-change-price" : totalPriceChange, "net-change-price" : netPriceChange,
+        "total-inventory-price-negative" : totalInventoryPriceChangeNegative, "total-inventory-price-positive" : totalInventoryPriceChangePositive,
+        "number-inventory-change-price" : totalInventoryPriceChange, "net-inventory-change-price" : netInventoryPriceChange,
+        "net-value-change" : netValueChange, "total-gain" : totalGain, "total-loss" : totalLoss, "total-value" : totalValue }
 
 #Fetch or build the AllCards library
 #out: dict representation of the AllCards.json file
@@ -330,8 +388,8 @@ def lookupSortCategory(strCardName,dictLib):
 def buildMergeDF(dfNew, dfOld):
     #merge with a double outer join of old and new
     dfMergeCards = pandas.merge(dfNew,dfOld,how="outer",on=["Name","Edition","Foil","Condition","Card Number"])
-    dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","CompareCount","Price","ComparePrice"]]
-    dfMergeCards = dfMergeCards.rename(index=str,columns={"Foil":"IsFoil","Card Number":"CardNumber","Count":"NewCount","CompareCount":"OldCount","Price":"NewPrice","ComparePrice":"OldPrice"})
+    dfMergeCards = dfMergeCards[["Name","Edition","Condition","Foil","Card Number","Count","OldCount","Price","OldPrice"]]
+    dfMergeCards = dfMergeCards.rename(index=str,columns={"Foil":"IsFoil","Card Number":"CardNumber","Count":"NewCount","Price":"NewPrice"})
     #dfMergeCards.info()
     #clean up foil flag
     dfMergeCards["IsFoil"].fillna(False,inplace=True)
@@ -351,7 +409,6 @@ def buildMergeDF(dfNew, dfOld):
     dfMergeCards.loc[dfMergeCards["NewCount"] == -1, "NewCount"] = 0 
     dfMergeCards["NewPrice"].fillna(0.0,inplace=True)
 
-
     #add some explicit columns for convenience in the log csv. Don't think I need these ultimately because of querying
     dfMergeCards.eval("CountChange = (NewCount - OldCount)",inplace=True)
     dfMergeCards.eval("PriceChange = (NewPrice - OldPrice)",inplace=True)
@@ -369,19 +426,18 @@ def buildMergeDF(dfNew, dfOld):
     dfMergeCards = dfMergeCards.sort_values(by=["SortCategory","Name"])
 
     dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
-    print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfCompareCards)) + ":" + str(len(dfMergeCards)))
+    print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" + str(len(dfTodaysCards)) + ":" + str(len(dfOldCards)) + ":" + str(len(dfMergeCards)))
     return dfMergeCards
 
 #write a new log entry to the run log
 def updateRunLog(
-    strOldFileName,strNewFileName,dictRunLog,dtScriptStart,dtScriptEnd,dictResultStats):
+    strOldFileName,strNewFileName,dtScriptStart,dtScriptEnd,dictResultStats):
     #intTotalCardsProcessed = countBulkToTrades+countBulkToDollar+countDollarToTrades+countDollarToBulk+countTradeToDollar+countTradeToBulk+countNewCards+countGoneCards+countUnchCards
     dictLogEntry = {"old-file" : strOldFileName, "new-file" : strNewFileName, "elapsed-time" : (dtScriptEnd.timestamp()-dtScriptStart.timestamp())}
     dictLogEntry.update(dictResultStats)
-    dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = dictLogEntry
+    #dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = dictLogEntry
     #print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
-    #TODO uncomment this when finished debugging
-    #writeRunLog(dictRunLog)
+    writeRunLog(dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f"), dictLogEntry)
 
 #send an email message
 def sendMail(strHTML, dictConfig):
@@ -604,6 +660,145 @@ def fetchAndWriteDeckboxLibrary(strTodayFileName) :
         todayFile.write(response.text)
         todayFile.close()
 
+#returns a temp dataframe with all columns renamed to have spaces before capital letters, this lets html line break the headers
+def renameColsForHTML(df):
+    #dictResults["trades-to-dollar"].rename(columns=lambda x: ' '.join(x.replace('_', ' ')[i:i+L] for i in range(0,len(x),L)) if df[x].dtype in ['float64','int64'] else x )    
+    #for every capital letter except the first, replace it with " " plus itself
+    return df.rename(columns=lambda x: re.sub("(?<!^)(?=[A-Z])",lambda y: " " + y.group(0),x))
+
+#returns formatted html string from dataframe using the conventions of my reports
+#basically I want left-aligned, wrapping column headers, links for card names, currency formatted, green background for positive
+def toHTMLDefaulter(df):
+    goodColor = "#8FBC8F"
+    badColor = "#E9967A"
+    formattedDF = renameColsForHTML(df)
+    formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
+    formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
+    formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
+    formattedDF = formattedDF.rename(index=str,columns={"Sort Category":"Sort","Condition":"Cond","Is Foil":"Foil","Card Number":"Card#","Old Count":"Old#","New Count":"New#","Old Price":"Old$","New Price":"New$","Is New":"New","Is Gone":"Del","Count Change":"\u0394Q","Price Change":"\u0394$","Total Change":"\u03a3\u0394$"},inplace=False)
+    #print(str(formattedDF))
+    html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
+    #print(html)
+    return html
+
+#make a relatively decent looking report that gets emailed out and written to disk
+def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
+    cssInlineStyle = """background-color: rgba(0, 0, 0, 0);
+    border-bottom-color: rgb(0, 0, 0);
+    border-bottom-style: none;
+    border-bottom-width: 0px;
+    border-collapse: collapse;
+    border-image-outset: 0px;
+    border-image-repeat: stretch;
+    border-image-slice: 100%;
+    border-image-source: none;
+    border-image-width: 1;
+    border-left-color: rgb(0, 0, 0);
+    border-left-style: none;
+    border-left-width: 0px;
+    border-right-color: rgb(0, 0, 0);
+    border-right-style: none;
+    border-right-width: 0px;
+    border-top-color: rgb(0, 0, 0);
+    border-top-style: none;
+    border-top-width: 0px;
+    box-sizing: border-box;
+    color: rgb(0, 0, 0);
+    display: table;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    margin-left: 0px;
+    margin-right: 0px;
+    margin-top: 12px;
+    text-size-adjust: 100%;
+    -webkit-border-horizontal-spacing: 0px;
+    -webkit-border-vertical-spacing: 0px;
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0);"""
+
+    #TODO-replace this with a template file for easier formatting
+    pandas.set_option('display.max_colwidth', -1)#since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
+    htmlStringWriter = io.StringIO()
+    htmlStringWriter.write("<html><style>.dataframe,body{" + cssInlineStyle + "}</style>")
+    htmlStringWriter.write("<body>")
+    htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
+    strPrettyTodayFileName = strTodayFileName.split("-")[0]
+    strPrettyTodayFileName = datetime.date(int(strPrettyTodayFileName[0:4]),int(strPrettyTodayFileName[4:6]),int(strPrettyTodayFileName[6:8])).strftime("%B %d, %Y")
+    strPrettyOldFileName = strOldFileName.split("-")[0]
+    strPrettyOldFileName = datetime.date(int(strPrettyOldFileName[0:4]),int(strPrettyOldFileName[4:6]),int(strPrettyOldFileName[6:8])).strftime("%B %d, %Y")
+    htmlStringWriter.write("<h2>" + strPrettyTodayFileName + " with " + strPrettyOldFileName +"</h2>")
+    htmlStringWriter.write("<table border=0 class=\"dataframe\" style=\"font-size : 18px\">")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("Total cards processed: </td><td><b>" + str(len(dfMergeCards)) +"</b>")
+    htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("New cards:</td><td><b>" + str(dictResultStats["count-new-cards"]) + "</b>")
+    htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("Gone cards:</td><td><b>" + str(dictResultStats["count-gone-cards"])  + "</b>")
+    htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("Unchanged cards:</td><td><b>" + str(dictResultStats["count-unch-cards"])  + "</b> ")
+    htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("Positive card shifts: </td><td>")
+    htmlStringWriter.write("<b>" + str(dictResultStats["count-bulk-to-dollar"]+dictResultStats["count-bulk-to-trades"]+dictResultStats["count-dollar-to-trades"]) + "</b> ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Dollar to Trades: <b>" + str(dictResultStats["count-dollar-to-trades"]) + "</b>; ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Bulk to Trades: <b>" + str(dictResultStats["count-bulk-to-trades"]) + "</b>; ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Bulk to Dollar: <b>" + str(dictResultStats["count-bulk-to-dollar"]) + "</b> ")
+    htmlStringWriter.write("</td></tr>")
+    htmlStringWriter.write("<tr><td>")
+    htmlStringWriter.write("Negative card shifts: </td><td>")
+    htmlStringWriter.write("<b>" + str(dictResultStats["count-trades-to-dollar"]+dictResultStats["count-trades-to-bulk"]+dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Trades to Dollar: <b>" + str(dictResultStats["count-trades-to-dollar"]) + "</b>; ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Trades to Bulk: <b>" + str(dictResultStats["count-trades-to-bulk"]) + "</b>; ")
+    htmlStringWriter.write("</td><td>")
+    htmlStringWriter.write("From Dollar to Bulk: <b>" + str(dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+    htmlStringWriter.write("</td></tr></table>")
+    htmlStringWriter.write(htmlStats(dfMergeCards))
+    htmlStringWriter.write("<hr/>")
+    htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
+    htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-dollar"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
+    htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-bulk"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-bulk"]))
+    htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
+    htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + htmlStats(dictResults["dollar-to-trades"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
+    htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + htmlStats(dictResults["dollar-to-bulk"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-bulk"]))
+    htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
+    htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + htmlStats(dictResults["bulk-to-trades"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
+    htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + htmlStats(dictResults["bulk-to-dollar"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-dollar"]))
+    htmlStringWriter.write("</body></html>")
+    htmlString = htmlStringWriter.getvalue()
+    htmlStringWriter.close()
+    return htmlString
+
+#read in and return today's CSV as DF, determine appropriate old CSV as DF, and the old file name for use later
+def buildCompareDFs(strTodayFileName):
+    #get today's file
+    dfTodaysCards = pandas.read_csv(DATA_DIR_NAME + strTodayFileName)
+    dfTodaysCards = cleanCardDataFrame(dfTodaysCards)
+
+    #getting older file is a bit trickier, check the run log, find the most recent run, find the old file used, get the next recent old file to compare with
+    dictRunLog = readRunLog()
+
+    strOldFileName = determineCompareFile(dictRunLog)
+    print("ToCompareAgainst: " + strOldFileName)
+
+    dfOldCards = pandas.read_csv(DATA_DIR_NAME + strOldFileName)
+    dfOldCards = cleanCardDataFrame(dfOldCards)
+    dfOldCards = dfOldCards.rename(index=str,columns={"Count":"OldCount","Price":"OldPrice"})
+
+    return dfTodaysCards,dfOldCards,strOldFileName
+
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
@@ -615,10 +810,7 @@ print("Hello World!!!!")
 
 dictConfig = configure()
 
-#reuse the datetime from the perf logger
 strToday = dtScriptStart.strftime("%Y%m%d")
-#print(strToday)
-
 strTodayFileName = strToday+"-magic-cards.csv"
 print("CSV that I want for today: " + strTodayFileName)
 
@@ -626,98 +818,19 @@ fetchAndWriteDeckboxLibrary(strTodayFileName)
 
 print("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
 
-#get today's file
-dfTodaysCards = pandas.read_csv(DATA_DIR_NAME + strTodayFileName)
-dfTodaysCards = cleanCardDataFrame(dfTodaysCards)
-
-#getting older file is a bit trickier, check the run log, find the most recent run, find the old file used, get the next recent old file to compare with
-dictRunLog = readRunLog()
-
-strCompareFileName = determineCompareFile(dictRunLog)
-print("ToCompareAgainst: " + strCompareFileName)
-
-dfCompareCards = pandas.read_csv(DATA_DIR_NAME + strCompareFileName)
-dfCompareCards = cleanCardDataFrame(dfCompareCards)
-#dfTodaysCards.info()
-dfCompareCards = dfCompareCards.rename(index=str,columns={"Count":"CompareCount","Price":"ComparePrice"})
-#dfCompareCards.info()
-
-dfMergeCards = buildMergeDF(dfTodaysCards,dfCompareCards) 
-
+dfTodaysCards,dfOldCards,strOldFileName = buildCompareDFs(strTodayFileName)
+dfMergeCards = buildMergeDF(dfTodaysCards,dfOldCards) 
 dictResults, dictResultStats = queryForReports(dfMergeCards)
 
 #all the work is done, now just print the reports, first the changes from bulk
+htmlString = buildHTMLReport(dfMergeCards,dictResults,dictResultStats)
 
-import re
-
-#returns a temp dataframe with all columns renamed to have spaces before capital letters, this lets html line break the headers
-def renameColsForHTML(df):
-    #dictResults["trades-to-dollar"].rename(columns=lambda x: ' '.join(x.replace('_', ' ')[i:i+L] for i in range(0,len(x),L)) if df[x].dtype in ['float64','int64'] else x )    
-    #for every capital letter except the first, replace it with " " plus itself
-    return df.rename(columns=lambda x: re.sub("(?<!^)(?=[A-Z])",lambda y: " " + y.group(0),x),inplace=False)
-
-#returns formatted html string from dataframe using the conventions of my reports
-#basically I want left-aligned, wrapping column headers, links for card names, currency formatted, green background for positive
-def toHTMLDefaulter(df):
-    goodColor = "#8FBC8F"
-    badColor = "#E9967A"
-    formattedDF = renameColsForHTML(df)
-    formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
-    formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
-    formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
-    html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
-    #print(html)
-    return html
-
-#TODO-replace this with a template file for easier formatting
-pandas.set_option('display.max_colwidth', -1)#since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
-htmlStringWriter = io.StringIO()
-htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
-htmlStringWriter.write("<h2>Comparing " + strTodayFileName + " to " + strCompareFileName +"</h2>")
-htmlStringWriter.write("Total cards processed: <b>" + str(len(dfMergeCards)) +"</b>")
-htmlStringWriter.write("<br/>New cards: <b>" + str(dictResultStats["count-new-cards"]) + "</b>")
-htmlStringWriter.write("<br/>Gone cards: <b>" + str(dictResultStats["count-gone-cards"])  + "</b>")
-htmlStringWriter.write("<br/>Unchanged cards: <b>" + str(dictResultStats["count-unch-cards"])  + "</b> ")
-htmlStringWriter.write("<br/>Positive card shifts: ")
-htmlStringWriter.write("<b>" + str(dictResultStats["count-bulk-to-dollar"]+dictResultStats["count-bulk-to-trades"]+dictResultStats["count-dollar-to-trades"]) + "</b> ")
-htmlStringWriter.write("(")
-htmlStringWriter.write("From Dollar to Trades: <b>" + str(dictResultStats["count-dollar-to-trades"]) + "</b>; ")
-htmlStringWriter.write("From Bulk to Trades: <b>" + str(dictResultStats["count-bulk-to-trades"]) + "</b>; ")
-htmlStringWriter.write("From Bulk to Dollar: <b>" + str(dictResultStats["count-bulk-to-dollar"]) + "</b> ")
-htmlStringWriter.write(")")
-htmlStringWriter.write("<br/>Negative card shifts: ")
-htmlStringWriter.write("<b>" + str(dictResultStats["count-trades-to-dollar"]+dictResultStats["count-trades-to-bulk"]+dictResultStats["count-dollar-to-bulk"]) + "</b> ")
-htmlStringWriter.write("(")
-htmlStringWriter.write("From Trades to Dollar: <b>" + str(dictResultStats["count-trades-to-dollar"]) + "</b>; ")
-htmlStringWriter.write("From Trades to Bulk: <b>" + str(dictResultStats["count-trades-to-bulk"]) + "</b>; ")
-htmlStringWriter.write("From Dollar to Bulk: <b>" + str(dictResultStats["count-dollar-to-bulk"]) + "</b> ")
-htmlStringWriter.write(")")
-htmlStringWriter.write("<br/>")
-htmlStringWriter.write(stringStats(dfMergeCards))
-htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
-htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-dollar"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
-htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + stringStats(dictResults["trades-to-bulk"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-bulk"]))
-htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
-htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + stringStats(dictResults["dollar-to-trades"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
-htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + stringStats(dictResults["dollar-to-bulk"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-bulk"]))
-htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
-htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + stringStats(dictResults["bulk-to-trades"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
-htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + stringStats(dictResults["bulk-to-dollar"]))
-htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-dollar"]))
-htmlString = htmlStringWriter.getvalue()
-htmlStringWriter.close()
-
-with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding='utf-8') as file:
+with open(DATA_DIR_NAME + strToday + "-report.htm","w", encoding="utf-16") as file:
     file.write(htmlString)
 
-#sendMail(htmlString, dictConfig)
+sendMail(htmlString, dictConfig)
 
 dtScriptEnd = datetime.datetime.now()
 print("Total time elapsed: " + str(dtScriptEnd.timestamp()-dtScriptStart.timestamp()))
 
-updateRunLog(strCompareFileName,strTodayFileName,dictRunLog,dtScriptStart, dtScriptEnd, dictResultStats)
+updateRunLog(strOldFileName,strTodayFileName,dtScriptStart, dtScriptEnd, dictResultStats)
