@@ -17,6 +17,7 @@
 # Goals: learn csv with pandas, http stuff with requests, json stuff
 # Thanks to - https://deckbox.org/help/tooltips tooltip library
 #TODO - figure out much change is from new stuff, this is interesting for a different reason
+#TODO - save off report results as json
 #
 
 import datetime
@@ -56,7 +57,7 @@ def eatCookies():
 #go get a card json library, write it to disk, unzip it and return it as a Path
 #keep the zip too so we cn compare byte size for updates
 def getCardLibrary(libFile):
-    print("in getCardLib:" + str(libFile))
+    debug("in getCardLib:" + str(libFile))
     response = requests.get(MAGIC_CARD_JSON_URL, stream=True)
     bytes = io.BytesIO(response.content)
     
@@ -123,7 +124,7 @@ def determineCompareFile(dictRunLog):
         lastNew = dictRunLog[runLogSize-1][1]["new-file"]
 
     print("LastCompared: "+str(lastCompared))
-    print("LastNewFile: " +str(lastNew))
+    #print("LastNewFile: " +str(lastNew))
 
     #find all the csvs in data/
     listCardsCSVs = list(filter(lambda x: str(x).endswith("magic-cards.csv"),os.listdir(DATA_DIR_NAME)))
@@ -142,8 +143,8 @@ def determineCompareFile(dictRunLog):
         indexLastCompared = -1
         indexLastNew = -1
 
-    #print("indexLastCompared: (-1 means I've never compared this file) " + str(indexLastCompared))
-    print("indexLastNew: (-1 means I've never compared this file) " + str(indexLastNew))
+    debug("indexLastCompared: (-1 means I've never compared this file) " + str(indexLastCompared))
+    debug("indexLastNew: (-1 means I've never compared this file) " + str(indexLastNew))
 
     #if there's no last new match in the directory, use the oldest
     if (indexLastNew == -1):
@@ -266,7 +267,7 @@ def stringStats(df):
 def htmlStats(df):
     df = calcStatsDict(df)
 
-    html = "<table border=1 class=\"dataframe\" style=\"font-size : 16px\">"
+    html = "<table border=1 class=\"stats\" style=\"font-size : 16px\">"
     html += "<tr><td>"
     html += "Total cards:</td><td colspan=2> {total-cards} ({total-inventory} inv, net: {net-inventory-change-quantity}).".format(**df)
     html += "</td></tr>"
@@ -336,7 +337,8 @@ def buildCardLibrary():
         debug("card db exists")
         
         #check to make sure is most recent
-        localZipSize = cardLibraryFile.with_suffix(".zip").stat().st_size
+        localZip = cardLibraryFile.with_suffix(".zip")
+        localZipSize = localZip.stat().st_size
         debug("localZipSize " + str(localZipSize))
 
         #check the header from json url
@@ -346,12 +348,13 @@ def buildCardLibrary():
         
         #only fetch if local (from a previous fetch) is a different size
         if (localZipSize != remoteZipSize):
-            print("not equal size, let's get a fresh card lib")
             #backup the current file, just in case
             timestampMod = os.path.getmtime(cardLibraryFile)
             dtMod = datetime.datetime.fromtimestamp(timestampMod)
             strModDate = dtMod.strftime("%Y%m%d")
-            shutil.copy(cardLibraryFile,DATA_DIR_NAME + strModDate + "-" + os.path.basename(cardLibraryFile) + ".bak")
+            strBackupName = DATA_DIR_NAME + os.path.basename(cardLibraryFile) + "-" + strModDate + ".zip.bak"
+            print("not equal size, let's get a fresh card lib. Backing up current to: " + strBackupName)
+            shutil.move(localZip,strBackupName)
             cardLibraryFile = getCardLibrary(cardLibraryFile)
 
 
@@ -717,6 +720,44 @@ def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
     -webkit-border-vertical-spacing: 0px;
     -webkit-tap-highlight-color: rgba(0, 0, 0, 0);"""
 
+    strJSFilterScript = """
+    <script charset="utf-8">
+    function displayTables(display){
+        tables = document.getElementsByClassName("stats");
+        tablen = tables.length;
+        for (i = 0; i < tablen; i++){
+            tables[i].style.display = display
+        }
+    }
+
+    function filterTDs() {
+        // Declare variables
+        var input, filter, table, tr, td, i,j,tablen,trlen;
+        input = document.getElementById("FilterInput");
+        filter = input.value.toUpperCase();
+        if (filter == ""){
+            displayTables("")
+        }else{
+            displayTables("none")
+        }
+        tables = document.getElementsByClassName("dataframe");
+        tablen = tables.length;
+        for (i = 0; i < tablen; i++){
+            // Loop through all tds, and hide those who don't match the search query
+            tr = tables[i].getElementsByTagName("tr");
+            trlen = tr.length;
+            for (j = 0; j < trlen; j++) {
+                if (tr[j].innerText.toUpperCase().indexOf(filter) > -1) {
+                    tr[j].style.display = "";
+                } else {
+                    tr[j].style.display = "none";
+                }
+            }
+        }
+    }
+    </script>
+    """
+
     #TODO-replace this with a template file for easier formatting
     pandas.set_option('display.max_colwidth', -1)#since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
     strPrettyTodayFileName = strTodayFileName.split("-")[0]
@@ -728,14 +769,15 @@ def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
     htmlStringWriter.write("<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">")
     htmlStringWriter.write("<title>Brian's Card Report for " + strPrettyTodayFileName + "</title>")
     htmlStringWriter.write("<script src=\"https://deckbox.org/assets/external/tooltip.js\" charset=\"utf-8\"></script>")
-    htmlStringWriter.write("<style>.dataframe,body{" + cssInlineStyle + "}</style></head>")
+    htmlStringWriter.write(strJSFilterScript)
+    htmlStringWriter.write("<style>.dataframe,table,body{" + cssInlineStyle + "}</style></head>")
     htmlStringWriter.write("<body class=\"\">")
     htmlStringWriter.write("<h1>Comparing shifts in magic card prices in my library.</h1>")
     htmlStringWriter.write("<h2>" + strPrettyTodayFileName + " with " + strPrettyOldFileName +"</h2>")
-    htmlStringWriter.write("<table border=0 class=\"dataframe\" style=\"font-size : 18px\">")
+    htmlStringWriter.write("<table border=0 style=\"font-size : 18px\">")
     htmlStringWriter.write("<tr><td>")
     htmlStringWriter.write("Total cards processed: </td><td><b>" + str(len(dfMergeCards)) +"</b>")
-    htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
+    htmlStringWriter.write("</td><td colspan=3 align=\"right\"><input type=\"text\" id=\"FilterInput\" onkeyup=\"filterTDs()\" placeholder=\"Filter by text..\"></td></tr>")
     htmlStringWriter.write("<tr><td>")
     htmlStringWriter.write("New cards:</td><td><b>" + str(dictResultStats["count-new-cards"]) + "</b>")
     htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
@@ -769,19 +811,19 @@ def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
     htmlStringWriter.write("<hr/>")
     htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
     htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-dollar"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
-    htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-bulk"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-bulk"]))
+    #htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
+    htmlStringWriter.write("<h2>Trades downgraded to Bulk</h2>" + htmlStats(dictResults["trades-to-bulk"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"].append(dictResults["trades-to-bulk"])))
     htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
     htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + htmlStats(dictResults["dollar-to-trades"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
+    #htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
     htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + htmlStats(dictResults["dollar-to-bulk"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-bulk"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"].append(dictResults["dollar-to-bulk"])))
     htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
     htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + htmlStats(dictResults["bulk-to-trades"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
+    #htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
     htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + htmlStats(dictResults["bulk-to-dollar"]))
-    htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-dollar"]))
+    htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"].append(dictResults["bulk-to-dollar"])))
     htmlStringWriter.write("</body></html>")
     htmlString = htmlStringWriter.getvalue()
     htmlStringWriter.close()
@@ -811,8 +853,9 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
+CURRENT_VERSION = "0.0.1"
 
-print("Hello World!!!!")
+print("Hello World from version " + CURRENT_VERSION)
 
 dictConfig = configure()
 
