@@ -41,6 +41,13 @@ from timeit import default_timer as timer
 import pandas
 import requests
 
+MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
+DATA_DIR_NAME = "data/"
+RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
+CONFIG_FILE_NAME = "config.json"
+COOKIE_FILE_NAME = "cookies.json"
+TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
+CURRENT_VERSION = "0.0.3"
 dtScriptStart = datetime.datetime.now()
 
 #write a dictionary of http cookies to a local file
@@ -123,7 +130,7 @@ def determineCompareFile(dictRunLog):
         lastCompared = dictRunLog[runLogSize-1][1]["old-file"]
         lastNew = dictRunLog[runLogSize-1][1]["new-file"]
 
-    print("LastCompared: "+str(lastCompared))
+    #print("LastCompared: "+str(lastCompared))
     #print("LastNewFile: " +str(lastNew))
 
     #find all the csvs in data/
@@ -676,13 +683,15 @@ def renameColsForHTML(df):
 def toHTMLDefaulter(df):
     goodColor = "#8FBC8F"
     badColor = "#E9967A"
-    formattedDF = renameColsForHTML(df)
-    formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
-    formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
-    formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
-    formattedDF = formattedDF.rename(index=str,columns={"Sort Category":"Sort","Condition":"Cond","Is Foil":"Foil","Card Number":"Card#","Old Count":"Old#","New Count":"New#","Old Price":"Old$","New Price":"New$","Is New":"New","Is Gone":"Del","Count Change":"\u0394" + "Q","Price Change":"\u0394" + "$","Total Change":"\u03a3\u0394$"},inplace=False)
-    #print(str(formattedDF))
-    html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
+    html = "<b>N/A - No match"
+    if (len(df) > 0):#don't bother if there's nothing there...
+        formattedDF = renameColsForHTML(df)
+        formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + str(x) + "</div>")
+        formattedDF[["Price Change","Total Change"]] = formattedDF[["Price Change","Total Change"]].applymap(lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") +"\">" + "${:,.2f}".format(float(x)) +"</div>")
+        formattedDF[["Old Price","New Price"]] = formattedDF[["Old Price","New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
+        formattedDF = formattedDF.rename(index=str,columns={"Sort Category":"Sort","Condition":"Cond","Is Foil":"Foil","Card Number":"Card#","Old Count":"Old#","New Count":"New#","Old Price":"Old$","New Price":"New$","Is New":"New","Is Gone":"Del","Count Change":"\u0394" + "Q","Price Change":"\u0394" + "$","Total Change":"\u03a3\u0394$"},inplace=False)
+        #print(str(formattedDF))
+        html = formattedDF.to_html(index=False,justify="left",index_names=False,escape=False,float_format=lambda x: "${:,.2f}".format(float(x)),formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
     #print(html)
     return html
 
@@ -810,19 +819,24 @@ def buildHTMLReport(dfMergeCards,dictResults,dictResultStats):
     htmlStringWriter.write(htmlStats(dfMergeCards))
     htmlStringWriter.write("<hr/>")
     htmlStringWriter.write("<h1>Report #1 - Trades</h1>")
-    htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-dollar"]))
-    #htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"]))
-    htmlStringWriter.write("<h2>Trades downgraded to Bulk</h2>" + htmlStats(dictResults["trades-to-bulk"]))
+    if (len(dictResults["trades-to-dollar"]) > 0):
+        htmlStringWriter.write("<h2>Trades downgraded to Dollar</h2>" + htmlStats(dictResults["trades-to-dollar"]))
+    if (len(dictResults["trades-to-bulk"]) > 0):
+        htmlStringWriter.write("<h2>Trades downgraded to Bulk</h2>" + htmlStats(dictResults["trades-to-bulk"]))
     htmlStringWriter.write(toHTMLDefaulter(dictResults["trades-to-dollar"].append(dictResults["trades-to-bulk"])))
+
     htmlStringWriter.write("<h1>Report #2 - Dollar</h1>")
-    htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + htmlStats(dictResults["dollar-to-trades"]))
-    #htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"]))
-    htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + htmlStats(dictResults["dollar-to-bulk"]))
+    if(len(dictResults["dollar-to-trades"]) > 0):
+        htmlStringWriter.write("<h2>Dollar upgrades to Trades</h2>" + htmlStats(dictResults["dollar-to-trades"]))
+    if(len(dictResults["dollar-to-bulk"]) > 0):
+        htmlStringWriter.write("<h2>Dollar downgraded to Bulk</h2>" + htmlStats(dictResults["dollar-to-bulk"]))
     htmlStringWriter.write(toHTMLDefaulter(dictResults["dollar-to-trades"].append(dictResults["dollar-to-bulk"])))
+
     htmlStringWriter.write("<h1>Report #3 - Bulk</h1>")
-    htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + htmlStats(dictResults["bulk-to-trades"]))
-    #htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"]))
-    htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + htmlStats(dictResults["bulk-to-dollar"]))
+    if(len(dictResults["bulk-to-trades"]) > 0):
+        htmlStringWriter.write("<h2>Bulk upgraded to Trades</h2>" + htmlStats(dictResults["bulk-to-trades"]))
+    if(len(dictResults["bulk-to-dollar"]) > 0):
+        htmlStringWriter.write("<h2>Bulk upgraded to Dollar</h2>" + htmlStats(dictResults["bulk-to-dollar"]))
     htmlStringWriter.write(toHTMLDefaulter(dictResults["bulk-to-trades"].append(dictResults["bulk-to-dollar"])))
     htmlStringWriter.write("</body></html>")
     htmlString = htmlStringWriter.getvalue()
@@ -846,14 +860,6 @@ def buildCompareDFs(strTodayFileName):
     dfOldCards = dfOldCards.rename(index=str,columns={"Count":"OldCount","Price":"OldPrice"})
 
     return dfTodaysCards,dfOldCards,strOldFileName
-
-MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
-DATA_DIR_NAME = "data/"
-RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
-CONFIG_FILE_NAME = "config.json"
-COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 2 #this might change, but it's $2 for now
-CURRENT_VERSION = "0.0.1"
 
 print("Hello World from version " + CURRENT_VERSION)
 
