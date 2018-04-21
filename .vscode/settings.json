@@ -1,3 +1,5 @@
 {
-    "python.pythonPath": "/usr/local/bin/python"
+  "python.pythonPath": "/usr/local/bin/python",
+  "prettier.useTabs": true,
+  "prettier.tabWidth": 4
 }

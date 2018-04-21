@@ -4,3 +4,4 @@ data/*
 .vscode/.ropeproject/objectdb
 config.json
 .vscode/.ropeproject/.config.py.swp
+*.swp

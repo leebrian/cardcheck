@@ -1,0 +1,35 @@
+<script charset="utf-8">
+function displayTables(display){
+    tables = document.getElementsByClassName("stats");
+    tablen = tables.length;
+    for (i = 0; i < tablen; i++){
+        tables[i].style.display = display
+    }
+}
+
+function filterTDs() {
+    // Declare variables
+    var input, filter, table, tr, td, i,j,tablen,trlen;
+    input = document.getElementById("FilterInput");
+    filter = input.value.toUpperCase();
+    if (filter == ""){
+        displayTables("")
+    }else{
+        displayTables("none")
+    }
+    tables = document.getElementsByClassName("dataframe");
+    tablen = tables.length;
+    for (i = 0; i < tablen; i++){
+        // Loop through all tds, and hide those who don't match the search query
+        tr = tables[i].getElementsByTagName("tr");
+        trlen = tr.length;
+        for (j = 0; j < trlen; j++) {
+            if (tr[j].innerText.toUpperCase().indexOf(filter) > -1) {
+                tr[j].style.display = "";
+            } else {
+                tr[j].style.display = "none";
+            }
+        }
+    }
+}
+</script>
