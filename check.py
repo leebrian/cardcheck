@@ -48,8 +48,8 @@ DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 2  # this might change, but it's $2 for now
-CURRENT_VERSION = "0.0.4"
+TRADE_BOX_THRESHOLD = 3  # this might change, but it's $3 for now
+CURRENT_VERSION = "0.0.5"
 dtScriptStart = datetime.datetime.now()
 
 
@@ -494,7 +494,8 @@ def updateRunLog(
     # write a new log entry to the run log
 
     dictLogEntry = {"old-file": strOldFileName, "new-file": strNewFileName,
-                    "elapsed-time": (dtScriptEnd.timestamp()-dtScriptStart.timestamp())}
+                    "elapsed-time": (dtScriptEnd.timestamp()-dtScriptStart.timestamp()),
+                    "card-check-version": CURRENT_VERSION}
     dictLogEntry.update(dictResultStats)
     #dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = dictLogEntry
     # print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
