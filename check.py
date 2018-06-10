@@ -16,8 +16,9 @@
  I'll schedule this to run every month or so
  Goals: learn csv with pandas, http stuff with requests, json stuff
  Thanks to - https://deckbox.org/help/tooltips tooltip library
- TODO - figure out much change is from new stuff, this is interesting for a different reason
+ TODO - figure out much change is from new stuff, this is interesting for a different reason; organic vs. adds
  TODO - save off report results as json
+ TODO - little graphs showing change from month to month visually
 
  Pass in "--debug" for additional log output
 """
