@@ -17,7 +17,6 @@
  Goals: learn csv with pandas, http stuff with requests, json stuff
  Thanks to - https://deckbox.org/help/tooltips tooltip library
  TODO - figure out much change is from new stuff, this is interesting for a different reason; organic vs. adds
- TODO - save off report results as json
  TODO - little graphs showing change from month to month visually
 
  Pass in "--debug" for additional log output
@@ -27,6 +26,7 @@ import datetime
 import io
 import json
 import logging
+import numpy
 import os
 import re
 import shutil
@@ -47,8 +47,8 @@ DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 3  # this might change, but it's $3 for now
-CURRENT_VERSION = "0.0.6"
+TRADE_BOX_THRESHOLD = 4  # this might change, but it's $4 for now
+CURRENT_VERSION = "0.0.7"
 dtScriptStart = datetime.datetime.now()
 
 
@@ -119,7 +119,11 @@ def writeRunLog(strTimestampKey, dictLogEntry):
     dictRunLog = readRunLog()
     dictRunLog[strTimestampKey] = dictLogEntry
     with open(RUN_LOG_FILE_NAME, "w") as file:
-        json.dump(dictRunLog, file)
+        json.dump(dictRunLog, file, default=default_numpy)
+
+def default_numpy(o):
+    if isinstance(o, numpy.int64): return int(o)  
+    raise TypeError
 
 
 def determineCompareFile(dictRunLog):
@@ -699,6 +703,7 @@ def queryForReports(df):
     stats["count-all-results"] = stats["count-unch-cards"] + stats["count-gone-cards"] + stats["count-new-cards"] \
         + stats["count-trades-to-bulk"] + stats["count-trades-to-dollar"] + stats["count-dollar-to-bulk"] + stats["count-dollar-to-trades"] \
         + stats["count-bulk-to-dollar"] + stats["count-bulk-to-trades"]
+    stats["stats"] = calcStatsDict(df)
     timeQueryEnd = timer()
     print("Total time elapsed for query: " +
           str(timeQueryEnd - timeQueryStart))
