@@ -5,3 +5,4 @@ data/*
 config.json
 .vscode/.ropeproject/.config.py.swp
 *.swp
+__pycache__/

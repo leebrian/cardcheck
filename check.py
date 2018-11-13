@@ -48,8 +48,7 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 4  # this might change, but it's $4 for now
-CURRENT_VERSION = "0.0.7"
-dtScriptStart = datetime.datetime.now()
+CURRENT_VERSION = "0.0.8"
 
 
 def makeCookies(cookies):
@@ -121,8 +120,10 @@ def writeRunLog(strTimestampKey, dictLogEntry):
     with open(RUN_LOG_FILE_NAME, "w") as file:
         json.dump(dictRunLog, file, default=default_numpy)
 
+
 def default_numpy(o):
-    if isinstance(o, numpy.int64): return int(o)  
+    if isinstance(o, numpy.int64):
+        return int(o)
     raise TypeError
 
 
@@ -488,7 +489,7 @@ def buildMergeDF(dfNew, dfOld):
 
     dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
     print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" +
-          str(len(dfTodaysCards)) + ":" + str(len(dfOldCards)) + ":" + str(len(dfMergeCards)))
+          str(len(dfNew)) + ":" + str(len(dfOld)) + ":" + str(len(dfMergeCards)))
     return dfMergeCards
 
 
@@ -522,7 +523,7 @@ def sendMail(strHTML, dictConfig):
     message["to"] = dictConfig["to-email"]
     message["subject"] = "Card comparison, go sort some cards"
     # print(str(datetime.datetime.now().timestamp()-start))
-    message.attach(MIMEText(htmlString, "html"))
+    message.attach(MIMEText(strHTML, "html"))
     server.send_message(message)
     # print(str(datetime.datetime.now().timestamp()-start))
     server.quit()
@@ -559,7 +560,7 @@ def loopDataFrame(df):
     rowsProcessed = 0
 
     timeLoopStart = timer()
-    for row in dfMergeCards.iterrows():
+    for row in df.iterrows():
         # print(str(index) + ":" + str(row))
         # is this a new card? This should not require any updates. Since new cards are already categorized
         updateRowStats(row, dictGeneralStats)
@@ -612,7 +613,7 @@ def loopDataFrame(df):
                     rowsProcessed += 1
 
     debug("total rows processed: " + str(rowsProcessed) +
-          " out of (" + str(len(dfMergeCards)) + ")")
+          " out of (" + str(len(df)) + ")")
 
     debug("dictNewCards: " + str(len(dictNewCards)) + str(dictNewCards))
 
@@ -642,61 +643,61 @@ def queryForReports(df):
     stats = {}
 
     # query for bulk to trades (good)
-    dfBulkToTrades = dfMergeCards.query(
+    dfBulkToTrades = df.query(
         "(IsNew != True) & (OldPrice < 1) & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
     results["bulk-to-trades"] = dfBulkToTrades
     stats["count-bulk-to-trades"] = len(dfBulkToTrades)
 
     # query for bulk to dollar (good)
-    dfBulkToDollar = dfMergeCards.query(
+    dfBulkToDollar = df.query(
         "(IsNew != True) & (OldPrice < 1) & ( (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ") )")
     results["bulk-to-dollar"] = dfBulkToDollar
     stats["count-bulk-to-dollar"] = len(dfBulkToDollar)
 
     # query for dollar to trades (good)
-    dfDollarToTrades = dfMergeCards.query("(IsNew != True) & ( (OldPrice < " + str(
+    dfDollarToTrades = df.query("(IsNew != True) & ( (OldPrice < " + str(
         TRADE_BOX_THRESHOLD) + ") & (OldPrice >= 1) ) & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
     results["dollar-to-trades"] = dfDollarToTrades
     stats["count-dollar-to-trades"] = len(dfDollarToTrades)
 
     # query for dollar to bulk (bad)
-    dfDollarToBulk = dfMergeCards.query(
+    dfDollarToBulk = df.query(
         "(IsNew != True) & ( (OldPrice < " + str(TRADE_BOX_THRESHOLD) + ") & (OldPrice >= 1) ) & (NewPrice < 1)")
     results["dollar-to-bulk"] = dfDollarToBulk
     stats["count-dollar-to-bulk"] = len(dfDollarToBulk)
 
     # query for trades to dollar (bad)
-    dfTradesToDollar = dfMergeCards.query("(IsNew != True) & (OldPrice > " + str(
+    dfTradesToDollar = df.query("(IsNew != True) & (OldPrice > " + str(
         TRADE_BOX_THRESHOLD) + ") & (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ")")
     results["trades-to-dollar"] = dfTradesToDollar
     stats["count-trades-to-dollar"] = len(dfTradesToDollar)
 
     # query for trade to bulk (bad)
-    dfTradesToBulk = dfMergeCards.query(
+    dfTradesToBulk = df.query(
         "(IsNew != True) & (OldPrice > " + str(TRADE_BOX_THRESHOLD) + ") & (NewPrice <1)")
     results["trades-to-bulk"] = dfTradesToBulk
     stats["count-trades-to-bulk"] = len(dfTradesToBulk)
 
     # query for new cards
-    dfNewCards = dfMergeCards.query("(IsNew == True)")
+    dfNewCards = df.query("(IsNew == True)")
     results["new-cards"] = dfNewCards
     stats["count-new-cards"] = len(dfNewCards)
 
     # query for removed cards
-    dfGoneCards = dfMergeCards.query("(IsGone == True)")
+    dfGoneCards = df.query("(IsGone == True)")
     results["gone-cards"] = dfGoneCards
     stats["count-gone-cards"] = len(dfGoneCards)
 
     # query for unch- these are cards with no need to be moved from their location
-    dfUnchCards = dfMergeCards.query("(IsNew != True) & (IsGone != True) & (" +
-                                     " ( (OldPrice >= " + str(TRADE_BOX_THRESHOLD) +
-                                     ") & (NewPrice >= " +
-                                     str(TRADE_BOX_THRESHOLD) + ") )" +
-                                     "| ( ( (OldPrice >= 1) & (OldPrice < " + str(TRADE_BOX_THRESHOLD) +
-                                     ") ) & ( (NewPrice >= 1) & (NewPrice < " +
-                                     str(TRADE_BOX_THRESHOLD) + ") ) )" +
-                                     "| ( (OldPrice < 1) & (NewPrice < 1) )" +
-                                     ")")
+    dfUnchCards = df.query("(IsNew != True) & (IsGone != True) & (" +
+                           " ( (OldPrice >= " + str(TRADE_BOX_THRESHOLD) +
+                           ") & (NewPrice >= " +
+                           str(TRADE_BOX_THRESHOLD) + ") )" +
+                           "| ( ( (OldPrice >= 1) & (OldPrice < " + str(TRADE_BOX_THRESHOLD) +
+                           ") ) & ( (NewPrice >= 1) & (NewPrice < " +
+                           str(TRADE_BOX_THRESHOLD) + ") ) )" +
+                           "| ( (OldPrice < 1) & (NewPrice < 1) )" +
+                           ")")
     results["unch-cards"] = dfUnchCards
     stats["count-unch-cards"] = len(dfUnchCards)
 
@@ -783,7 +784,7 @@ def toHTMLDefaulter(df):
     return html
 
 
-def buildHTMLReport(dfMergeCards, dictResults, dictResultStats):
+def buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName, strOldFileName):
     """make a relatively decent looking report that gets emailed out and written to disk"""
 
     with open("./templates/inline-css", "r") as file:
@@ -925,39 +926,49 @@ def buildCompareDFs(strTodayFileName):
     return dfTodaysCards, dfOldCards, strOldFileName
 
 
-print("Hello World from version " + CURRENT_VERSION)
+def today_csv_file_name(strToday=datetime.datetime.now().strftime("%Y%m%d")):
+    strTodayFileName = strToday + "-magic-cards.csv"
+    return strTodayFileName
 
-dictConfig = configure()
 
-strToday = dtScriptStart.strftime("%Y%m%d")
-strTodayFileName = strToday + "-magic-cards.csv"
-print("CSV that I want for today: " + strTodayFileName)
+def main():
+    dtScriptStart = datetime.datetime.now()
+    print("Hello World from version " + CURRENT_VERSION)
 
-fetchAndWriteDeckboxLibrary(strTodayFileName)
+    dictConfig = configure()
 
-debug("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
+    strToday = datetime.datetime.now().strftime("%Y%m%d")
 
-dfTodaysCards, dfOldCards, strOldFileName = buildCompareDFs(strTodayFileName)
-dfMergeCards = buildMergeDF(dfTodaysCards, dfOldCards)
-dictResults, dictResultStats = queryForReports(dfMergeCards)
+    strTodayFileName = today_csv_file_name(strToday)
+    print("CSV that I want for today: " + strTodayFileName)
 
-# all the work is done, now just print the reports, first the changes from bulk
-htmlString = buildHTMLReport(dfMergeCards, dictResults, dictResultStats)
+    fetchAndWriteDeckboxLibrary(strTodayFileName)
 
-with open(DATA_DIR_NAME + strToday + "-report.htm", "w", encoding="utf-8") as file:
-    file.write(htmlString)
+    debug("OK cool, now I have a CSV of my library, a dictionary of every magic card ever that's up to date. Now I can check for price diffs")
 
-# don't send mail if debug mode, this takes a few seconds and I usually don't want emails while testing stuff
-if (logging.getLogger(__name__).getEffectiveLevel() > logging.DEBUG):
-    print("log level is not debug, email")
-    sendMail(htmlString, dictConfig)
+    dfTodaysCards, dfOldCards, strOldFileName = buildCompareDFs(strTodayFileName)
+    dfMergeCards = buildMergeDF(dfTodaysCards, dfOldCards)
+    dictResults, dictResultStats = queryForReports(dfMergeCards)
 
-dtScriptEnd = datetime.datetime.now()
-print("Total time elapsed: " +
-      str(dtScriptEnd.timestamp() - dtScriptStart.timestamp()))
+    # all the work is done, now just print the reports, first the changes from bulk
+    htmlString = buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName, strOldFileName)
 
-# don't log the run and clog up the log if debug mode
-if (logging.getLogger(__name__).getEffectiveLevel() > logging.DEBUG):
-    print("log level is not debug, log run")
-    updateRunLog(strOldFileName, strTodayFileName,
-                 dtScriptStart, dtScriptEnd, dictResultStats)
+    with open(DATA_DIR_NAME + strToday + "-report.htm", "w", encoding="utf-8") as file:
+        file.write(htmlString)
+
+    # don't send mail if debug mode, this takes a few seconds and I usually don't want emails while testing stuff
+    if (logging.getLogger(__name__).getEffectiveLevel() > logging.DEBUG):
+        print("log level is not debug, email")
+        sendMail(htmlString, dictConfig)
+
+    dtScriptEnd = datetime.datetime.now()
+    print("Total time elapsed: " + str(dtScriptEnd.timestamp() - dtScriptStart.timestamp()))
+
+    # don't log the run and clog up the log if debug mode
+    if (logging.getLogger(__name__).getEffectiveLevel() > logging.DEBUG):
+        print("log level is not debug, log run")
+        updateRunLog(strOldFileName, strTodayFileName, dtScriptStart, dtScriptEnd, dictResultStats)
+
+
+if __name__ == "__main__":
+    main()
