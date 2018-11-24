@@ -28,6 +28,7 @@ import json
 import logging
 import numpy
 import os
+import platform
 import re
 import shutil
 import smtplib
@@ -48,7 +49,8 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 4  # this might change, but it's $4 for now
-CURRENT_VERSION = "0.0.8"
+CURRENT_VERSION = "0.0.9"
+HOST_NAME = platform.node()
 
 
 def makeCookies(cookies):
@@ -122,9 +124,9 @@ def writeRunLog(strTimestampKey, dictLogEntry):
 
 
 def default_numpy(o):
-    if isinstance(o, numpy.int64):
+    if isinstance(o, (numpy.int64, numpy.int32)):
         return int(o)
-    raise TypeError
+    raise TypeError("Can't understand the object type <" + str(type(o)) + "> for object " + str(o))
 
 
 def determineCompareFile(dictRunLog):
@@ -499,7 +501,8 @@ def updateRunLog(
 
     dictLogEntry = {"old-file": strOldFileName, "new-file": strNewFileName,
                     "elapsed-time": (dtScriptEnd.timestamp() - dtScriptStart.timestamp()),
-                    "card-check-version": CURRENT_VERSION}
+                    "card-check-version": CURRENT_VERSION,
+                    "host-name": HOST_NAME}
     dictLogEntry.update(dictResultStats)
     # dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")] = dictLogEntry
     # print(str(dictRunLog[dtScriptStart.strftime("%Y%m%d-%H:%M:%S:%f")]))
@@ -896,7 +899,7 @@ def buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName
     htmlStringWriter.write(toHTMLDefaulter(
         dictResults["bulk-to-trades"].append(dictResults["bulk-to-dollar"])))
     htmlStringWriter.write(
-        "<br/>Thank you drive through...v" + CURRENT_VERSION)
+        "<br/>Thank you drive through...v" + CURRENT_VERSION + "..." + HOST_NAME)
     htmlStringWriter.write("</body></html>")
     htmlString = htmlStringWriter.getvalue()
     htmlStringWriter.close()
@@ -933,7 +936,7 @@ def today_csv_file_name(strToday=datetime.datetime.now().strftime("%Y%m%d")):
 
 def main():
     dtScriptStart = datetime.datetime.now()
-    print("Hello World from version " + CURRENT_VERSION)
+    print("Hello World from version " + CURRENT_VERSION + " on " + HOST_NAME)
 
     dictConfig = configure()
 

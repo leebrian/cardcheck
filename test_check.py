@@ -9,6 +9,8 @@ Dumps out a full inventory to data dir.
 import check
 from pathlib import Path
 import json
+import numpy
+import platform
 
 
 def main():
@@ -17,6 +19,12 @@ def main():
     test_suite()
 
     print('hello')
+
+
+def test_platform_node():
+    host_name = platform.node()
+    print(host_name)
+    assert (host_name is not None), "Host name from platform node should not be null."
 
 
 def test_card_lib():
@@ -49,11 +57,22 @@ def test_write_full_inventory(inventory):
     inventory.to_csv(check.DATA_DIR_NAME + 'full_inventory.csv')
 
 
+def test_default_numpy():
+    test_val = check.default_numpy(numpy.int64(7))
+    assert (test_val == 7), "Default to 7 meand default numpy is working"
+    try:
+        test_val = check.default_numpy(numpy.float64(7.0))
+    except TypeError:
+        pass
+
+
 def test_suite():
     card_lib = test_card_lib()
     df_inventory = test_inventory()
     df_full_inventory = test_sort_category(card_lib, df_inventory)
     test_write_full_inventory(df_full_inventory)
+    test_default_numpy()
+    test_platform_node()
 
 
 if __name__ == "__main__":
