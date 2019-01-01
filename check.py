@@ -49,7 +49,7 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 4  # this might change, but it's $4 for now
-CURRENT_VERSION = "0.0.9"
+CURRENT_VERSION = "0.0.10"
 HOST_NAME = platform.node()
 
 
@@ -396,15 +396,15 @@ def buildCardLibrary():
         # only fetch if local (from a previous fetch) is a different size
         if (localZipSize != remoteZipSize):
             # backup the current file, just in case
-            timestampMod = os.path.getmtime(cardLibraryFile)
+            timestampMod = os.path.getmtime(str(cardLibraryFile))
             dtMod = datetime.datetime.fromtimestamp(timestampMod)
             strModDate = dtMod.strftime("%Y%m%d")
             strBackupName = DATA_DIR_NAME + \
-                os.path.basename(cardLibraryFile) + "-" + \
+                os.path.basename(str(cardLibraryFile)) + "-" + \
                 strModDate + ".zip.bak"
             print(
-                "not equal size, let's get a fresh card lib. Backing up current to: " + strBackupName)
-            shutil.move(localZip, strBackupName)
+                "not equal size, let's get a fresh card lib. Backing up current " + str(localZip) + " to: " + strBackupName)
+            shutil.move(str(localZip), strBackupName)
             cardLibraryFile = getCardLibrary(cardLibraryFile)
 
     with cardLibraryFile.open() as file:
