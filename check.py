@@ -18,6 +18,8 @@
  Thanks to - https://deckbox.org/help/tooltips tooltip library
  TODO - figure out much change is from new stuff, this is interesting for a different reason; organic vs. adds
  TODO - little graphs showing change from month to month visually
+ TODO - heatmap of changed by set
+ TODO - heatmap of absolute and average value by set
 
  Pass in "--debug" for additional log output
 """
@@ -48,8 +50,8 @@ DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 4  # this might change, but it's $4 for now
-CURRENT_VERSION = "0.0.10"
+TRADE_BOX_THRESHOLD = 5  # this might change, but it's $5 for now
+CURRENT_VERSION = "0.0.11"
 HOST_NAME = platform.node()
 
 
