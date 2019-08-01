@@ -51,7 +51,7 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 5  # this might change, but it's $5 for now
-CURRENT_VERSION = "0.0.11"
+CURRENT_VERSION = "0.0.12"
 HOST_NAME = platform.node()
 
 
@@ -89,7 +89,7 @@ def cleanCardDataFrame(df):
     expects a DataFrame in, returns a cleaned DataFrame back"""
 
     # remove all the columns I don't need
-    listColumnsIDontNeed = {"Type", "Tradelist Count", "Rarity", "Language", "Signed",
+    listColumnsIDontNeed = {"Type", "Rarity", "Language", "Signed",
                             "Artist Proof", "Altered Art", "Misprint", "Promo", "Textless", "My Price"}
     for colName in listColumnsIDontNeed:
         if colName in df.columns:
@@ -448,11 +448,11 @@ def buildMergeDF(dfNew, dfOld):
 
     # merge with a double outer join of old and new
     dfMergeCards = pandas.merge(dfNew, dfOld, how="outer", on=[
-                                "Name", "Edition", "Foil", "Condition", "Card Number"])
+                                "Name", "Edition", "Foil", "Condition", "Card Number"], suffixes=("_New", "_Old"))
     dfMergeCards = dfMergeCards[["Name", "Edition", "Condition",
-                                 "Foil", "Card Number", "Count", "OldCount", "Price", "OldPrice"]]
+                                 "Foil", "Card Number", "Count", "OldCount", "Price", "OldPrice", "Tradelist Count_New"]]
     dfMergeCards = dfMergeCards.rename(index=str, columns={
-                                       "Foil": "IsFoil", "Card Number": "CardNumber", "Count": "NewCount", "Price": "NewPrice"})
+                                       "Foil": "IsFoil", "Card Number": "CardNumber", "Count": "NewCount", "Price": "NewPrice", "Tradelist Count_New": "TradeCount"})
 
     # clean up foil flag
     dfMergeCards["IsFoil"].fillna(False, inplace=True)
@@ -464,6 +464,10 @@ def buildMergeDF(dfNew, dfOld):
     dfMergeCards.eval("IsNew = (OldCount == -1)", inplace=True)
     dfMergeCards.loc[dfMergeCards["OldCount"] == -1, "OldCount"] = 0
     dfMergeCards["OldPrice"].fillna(0.0, inplace=True)
+
+    # clean up trade counts
+    dfMergeCards["TradeCount"].fillna(0, inplace=True)
+    dfMergeCards["TradeCount"] = dfMergeCards["TradeCount"].astype("int")
 
     # clean up null values in new set for deleted cards, set up a new field for deleted cards
     dfMergeCards["NewCount"].fillna(-1, inplace=True)
@@ -487,7 +491,7 @@ def buildMergeDF(dfNew, dfOld):
 
     # reorder the columns how I like them
     dfMergeCards = dfMergeCards[["SortCategory", "Name", "Edition", "Condition", "IsFoil", "CardNumber", "OldCount",
-                                 "NewCount", "OldPrice", "NewPrice", "IsNew", "IsGone", "CountChange", "PriceChange", "TotalChange"]]
+                                 "NewCount", "TradeCount", "OldPrice", "NewPrice", "IsNew", "IsGone", "CountChange", "PriceChange", "TotalChange"]]
 
     dfMergeCards = dfMergeCards.sort_values(by=["SortCategory", "Name"])
 
@@ -773,15 +777,17 @@ def toHTMLDefaulter(df):
     badColor = "#E9967A"
     html = "<b>N/A - No match"
     if (len(df) > 0):  # don't bother if there's nothing there...
-        formattedDF = renameColsForHTML(df)
-        formattedDF[["Count Change"]] = formattedDF[["Count Change"]].applymap(
+        df[["CountChange"]] = df[["CountChange"]].applymap(
             lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") + "\">" + str(x) + "</div>")
-        formattedDF[["Price Change", "Total Change"]] = formattedDF[["Price Change", "Total Change"]].applymap(
+        df[["PriceChange", "TotalChange"]] = df[["PriceChange", "TotalChange"]].applymap(
             lambda x: "<div style=\"background-color: " + (badColor if x < 0 else goodColor if x > 0 else "") + "\">" + "${:,.2f}".format(float(x)) + "</div>")
-        formattedDF[["Old Price", "New Price"]] = formattedDF[[
-            "Old Price", "New Price"]].applymap(lambda x: "${:,.2f}".format(float(x)))
-        formattedDF = formattedDF.rename(index=str, columns={"Sort Category": "Sort", "Condition": "Cond", "Is Foil": "Foil", "Card Number": "Card#", "Old Count": "Old#", "New Count": "New#",
-                                                             "Old Price": "Old$", "New Price": "New$", "Is New": "New", "Is Gone": "Del", "Count Change": "\u0394" + "Q", "Price Change": "\u0394" + "$", "Total Change": "\u03a3\u0394$"}, inplace=False)
+        df[["OldPrice", "NewPrice"]] = df[[
+            "OldPrice", "NewPrice"]].applymap(lambda x: "${:,.2f}".format(float(x)))
+        df = df.rename(index=str, columns={"SortCategory": "Sort", "Condition": "Cond", "IsFoil": "Foil", "CardNumber": "Card#", "OldCount": "Old#", "NewCount": "New#", "TradeCount": "Trade#",
+                                           "OldPrice": "Old$", "NewPrice": "New$", "IsNew": "New", "IsGone": "Del", "CountChange": "\u0394" + "Q", "PriceChange": "\u0394" + "$", "TotalChange": "\u03a3\u0394$"})
+
+        formattedDF = renameColsForHTML(df)
+        formattedDF = formattedDF.drop(columns=["New", "Del"])
         # print(str(formattedDF))
         html = formattedDF.to_html(index=False, justify="left", index_names=False, escape=False, float_format=lambda x: "${:,.2f}".format(
             float(x)), formatters={"Name": lambda x: "<a href=\"https://deckbox.org/mtg/" + x + "\" target=_blank>" + x + "</a>"})
