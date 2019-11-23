@@ -30,8 +30,10 @@ import json
 import logging
 import numpy
 import os
+import pandas
 import platform
 import re
+import requests
 import shutil
 import smtplib
 import sys
@@ -42,16 +44,13 @@ from operator import itemgetter
 from pathlib import Path
 from timeit import default_timer as timer
 
-import pandas
-import requests
-
 MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 5  # this might change, but it's $5 for now
-CURRENT_VERSION = "0.0.12"
+TRADE_BOX_THRESHOLD = 6  # this might change, but it's this for now
+CURRENT_VERSION = "0.0.13"
 HOST_NAME = platform.node()
 
 
