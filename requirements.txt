@@ -1,5 +1,5 @@
 #minimum package versions
-python >= 3.5.3
+python >= 3.5.1
 pandas >= 0.19.2
 requests >= 2.12.4
 numpy >= 1.12.1
