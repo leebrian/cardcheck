@@ -44,7 +44,7 @@ from operator import itemgetter
 from pathlib import Path
 from timeit import default_timer as timer
 
-MAGIC_CARD_JSON_URL = "https://mtgjson.com/json/AllCards.json.zip"
+MAGIC_CARD_JSON_URL = "https://mtgjson.com/api/v5/AtomicCards.json.zip"
 DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
