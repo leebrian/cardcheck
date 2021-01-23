@@ -50,7 +50,7 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 6  # this might change, but it's this for now
-CURRENT_VERSION = "0.0.14"
+CURRENT_VERSION = "0.0.15"
 HOST_NAME = platform.node()
 
 
@@ -805,7 +805,7 @@ def buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName
 
     # TODO-replace this with a template file for easier formatting
     # since I want links in html, I have to have a really long colwidth, -1=no limit, rather than figuring out max needed. I typically don't display so this doesn't matter
-    pandas.set_option('display.max_colwidth', -1)
+    pandas.set_option('display.max_colwidth', None)
     strPrettyTodayFileName = strTodayFileName.split("-")[0]
     strPrettyTodayFileName = datetime.date(int(strPrettyTodayFileName[0:4]), int(
         strPrettyTodayFileName[4:6]), int(strPrettyTodayFileName[6:8])).strftime("%B %d, %Y")
