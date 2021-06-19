@@ -1,12 +1,12 @@
 #!/usr/local/bin/python
 
 """ Mess-around project to learn more python.
- I organize my card collection according to price. The $TRADE threshold is $7 plus for cards are kept in my trade box. I adjust this whenenver the trade box gets full.
- $1-$TRADE cards are kept in a separate less accessed box. Anything under $1 is kept as a "bulk." Since prices change, it's a bit of a pain to check each card's value.
+ I organize my card collection according to price. The $TRADE_BOX_THRESHOLD is for cards kept in my trade box. I adjust this whenenver the trade box gets full.
+ $1-$TRADE_BOX_THRESHOLD cards are kept in a separate less accessed box. Anything under $1 is kept as a "bulk." Since prices change, it's a bit of a pain to check each card's value.
  This program will compare current prices to an older version of the inventory and produce a report reports:
- Report 1) Cards that dropped from trade box, $TRADE->$1; $TRADE->bulk w/ gross delta; by color, alphabetized
- Report 2) Cards that changed from dollar box, $1->$TRADE; $1->bulk w/gross delta; by color, alphabetized
- Report 3) Cards that increased from bulk box, bulk->$1; bulk-$TRADE w/gross delta; by color, alphabetized
+ Report 1) Cards that dropped from trade box, $TRADE_BOX_THRESHOLD->$1; $TRADE_BOX_THRESHOLD->bulk w/ gross delta; by color, alphabetized
+ Report 2) Cards that changed from dollar box, $1->$TRADE_BOX_THRESHOLD; $1->bulk w/gross delta; by color, alphabetized
+ Report 3) Cards that increased from bulk box, bulk->$1; bulk-$TRADE_BOX_THRESHOLD w/gross delta; by color, alphabetized
  Overall change in value, any notes
 
  So I have to export from deckbox.org, then compare to old listCardsCSVs
@@ -49,8 +49,8 @@ DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 7  # this might change, but it's this for now
-CURRENT_VERSION = "0.0.17"
+TRADE_BOX_THRESHOLD = 9  # this might change, but it's this for now
+CURRENT_VERSION = "0.0.18"
 HOST_NAME = platform.node()
 
 
