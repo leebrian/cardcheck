@@ -49,8 +49,8 @@ DATA_DIR_NAME = "data/"
 RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
-TRADE_BOX_THRESHOLD = 9  # this might change, but it's this for now
-CURRENT_VERSION = "0.0.18"
+TRADE_BOX_THRESHOLD = 10  # this might change, but it's this for now
+CURRENT_VERSION = "0.0.19"
 HOST_NAME = platform.node()
 
 
