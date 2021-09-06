@@ -1,7 +1,7 @@
 #!/usr/local/bin/python
 
 """ Mess-around project to learn more python.
- I organize my card collection according to price. The $TRADE_BOX_THRESHOLD is for cards kept in my trade box. I adjust this whenenver the trade box gets full.
+ I organize my card collection according to price. The $TRADE_BOX_THRESHOLD is for cards kept in my trade box. I adjust this whenever the trade box gets full.
  $1-$TRADE_BOX_THRESHOLD cards are kept in a separate less accessed box. Anything under $1 is kept as a "bulk." Since prices change, it's a bit of a pain to check each card's value.
  This program will compare current prices to an older version of the inventory and produce a report reports:
  Report 1) Cards that dropped from trade box, $TRADE_BOX_THRESHOLD->$1; $TRADE_BOX_THRESHOLD->bulk w/ gross delta; by color, alphabetized
@@ -50,7 +50,8 @@ RUN_LOG_FILE_NAME = DATA_DIR_NAME + "run-log.json"
 CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 10  # this might change, but it's this for now
-CURRENT_VERSION = "0.0.19"
+BULK_BOX_THRESHOLD = 3  # used to be a dollar, but some buyers said less than #4 is bulk
+CURRENT_VERSION = "0.0.20"
 HOST_NAME = platform.node()
 
 
@@ -95,7 +96,7 @@ def cleanCardDataFrame(df):
             del df[colName]
 
     # convert price to a number (dont' care about dollar sign)
-    df["Price"] = df["Price"].str.replace("$", "").str.replace(",","").astype(float)
+    df["Price"] = df["Price"].str.replace("$", "").str.replace(",", "").astype(float)
 
     # should be fewer columns now, and price should be a float
     # df.info()
@@ -168,8 +169,7 @@ def determineCompareFile(dictRunLog):
         indexLastCompared = -1
         indexLastNew = -1
 
-    debug("indexLastCompared: (-1 means I've never compared this file) " +
-          str(indexLastCompared))
+    debug("indexLastCompared: (-1 means I've never compared this file) " + str(indexLastCompared))
     debug("indexLastNew: (-1 means I've never compared this file) " + str(indexLastNew))
 
     # if there's no last new match in the directory, use the oldest
@@ -596,19 +596,19 @@ def loopDataFrame(df):
                     updateRowStats(row, dictUnchangedCards)
                     rowsProcessed += 1
             # change for changes to dollar
-            elif row["NewPrice"] >= 1:
+            elif row["NewPrice"] >= BULK_BOX_THRESHOLD:
                 # if new>1&old>2, downgrade from trades to dollar
                 if row["OldPrice"] >= TRADE_BOX_THRESHOLD:
                     updateRowStats(row, dictTradesToDollar)
                     rowsProcessed += 1
-                elif row["OldPrice"] < 1:  # if new>1&old<1, upgrade from bulk to dollar
+                elif row["OldPrice"] < BULK_BOX_THRESHOLD:  # if new>1&old<1, upgrade from bulk to dollar
                     updateRowStats(row, dictBulktoDollar)
                     rowsProcessed += 1
                 else:  # if new>1&old>1, do nothing (ie, no change)
                     updateRowStats(row, dictUnchangedCards)
                     rowsProcessed += 1
             # check for downgrades to bulk
-            elif row["NewPrice"] < 1:
+            elif row["NewPrice"] < BULK_BOX_THRESHOLD:
                 # if new<1&old>2, downgrade from trades to bulk
                 if row["OldPrice"] >= TRADE_BOX_THRESHOLD:
                     updateRowStats(row, dictTradesToBulk)
