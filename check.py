@@ -51,7 +51,7 @@ CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 10  # this might change, but it's this for now
 BULK_BOX_THRESHOLD = 3  # used to be a dollar, but some buyers said less than #4 is bulk
-CURRENT_VERSION = "0.0.20"
+CURRENT_VERSION = "0.0.21"
 HOST_NAME = platform.node()
 
 
@@ -95,7 +95,7 @@ def cleanCardDataFrame(df):
         if colName in df.columns:
             del df[colName]
 
-    # convert price to a number (dont' care about dollar sign)
+    # convert price to a number (don't care about dollar sign)
     df["Price"] = df["Price"].str.replace("$", "").str.replace(",", "").astype(float)
 
     # should be fewer columns now, and price should be a float
@@ -280,10 +280,10 @@ def printStats(dict, label="Unknown"):
             totalLoss += item["total-change"]
 
     print("total items: " + str(len(list)))
-    print("netInventoryQuantityChange:" + str(int(netInventoryQuantityChange)) + "; cardsIncreasedValue: " +
-          str(quantityChangePositive) + "; cardsDecreasedValue: " + str(quantityChangeNegative))
-    print("netValueChange: " + "${:,.2f}".format(netValueChange) + "; grossPositive: " +
-          "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
+    print("netInventoryQuantityChange:" + str(int(netInventoryQuantityChange)) + "; cardsIncreasedValue: "
+          + str(quantityChangePositive) + "; cardsDecreasedValue: " + str(quantityChangeNegative))
+    print("netValueChange: " + "${:,.2f}".format(netValueChange) + "; grossPositive: "
+          + "${:,.2f}".format(totalGain) + "; grossNegative: " + "${:,.2f}".format(totalLoss))
 
 
 def stringStats(df):
@@ -332,16 +332,16 @@ def calcStatsDict(df):
     totalChangeQuantity = quantityChangeNegative + quantityChangePositive
     netChangeQuantity = quantityChangePositive - quantityChangeNegative
 
-    priceChangeNegative = df[df["OldPrice"] >
-                             df["NewPrice"]]["NewCount"].count()
-    priceChangePositive = df[df["OldPrice"] <
-                             df["NewPrice"]]["NewCount"].count()
+    priceChangeNegative = df[df["OldPrice"]
+                             > df["NewPrice"]]["NewCount"].count()
+    priceChangePositive = df[df["OldPrice"]
+                             < df["NewPrice"]]["NewCount"].count()
     totalPriceChange = priceChangeNegative + priceChangePositive
     netPriceChange = priceChangePositive - priceChangeNegative
-    totalInventoryPriceChangeNegative = df[df["OldPrice"] >
-                                           df["NewPrice"]]["NewCount"].sum()
-    totalInventoryPriceChangePositive = df[df["OldPrice"] <
-                                           df["NewPrice"]]["NewCount"].sum()
+    totalInventoryPriceChangeNegative = df[df["OldPrice"]
+                                           > df["NewPrice"]]["NewCount"].sum()
+    totalInventoryPriceChangePositive = df[df["OldPrice"]
+                                           < df["NewPrice"]]["NewCount"].sum()
     totalInventoryPriceChange = totalInventoryPriceChangeNegative + \
         totalInventoryPriceChangePositive
     netInventoryPriceChange = totalInventoryPriceChangePositive - \
@@ -370,8 +370,8 @@ def buildCardLibrary():
 
     # now let's make sure that there's the most recent card library in json format
     cardLibraryFile = Path(DATA_DIR_NAME + "AllCards.json")
-    debug("magic card lib file:" + str(cardLibraryFile) +
-          ":" + str(cardLibraryFile.exists()))
+    debug("magic card lib file:" + str(cardLibraryFile)
+          + ":" + str(cardLibraryFile.exists()))
     cardLibraryDict = None
 
     # if we don't have the file yet, go get it
@@ -495,8 +495,8 @@ def buildMergeDF(dfNew, dfOld):
     dfMergeCards = dfMergeCards.sort_values(by=["SortCategory", "Name"])
 
     dfMergeCards.to_csv(DATA_DIR_NAME + "last-merged.csv")
-    print("Comparing #TodayRecords to #CompareRecords in #MergedRecords" +
-          str(len(dfNew)) + ":" + str(len(dfOld)) + ":" + str(len(dfMergeCards)))
+    print("Comparing #TodayRecords to #CompareRecords in #MergedRecords"
+          + str(len(dfNew)) + ":" + str(len(dfOld)) + ":" + str(len(dfMergeCards)))
     return dfMergeCards
 
 
@@ -555,7 +555,7 @@ def loopDataFrame(df):
     # bulk changes-upped-trade cards, count change, price change, total change, old-count,new-count,old-price,new-price
     dictBulkToTrade = {}
     # bulk changes-upped-dollar cards, count change, price change, total change, old-count,new-count,old-price,new-price
-    dictBulktoDollar = {}
+    dictBulkToDollar = {}
     # new cards
     dictNewCards = {}
     # removed cards
@@ -584,44 +584,44 @@ def loopDataFrame(df):
         else:
             # check for changes to trade
             if row["NewPrice"] >= TRADE_BOX_THRESHOLD:
-                # print("NewPrice is over $2: " + str(row))
-                # if new>2&old<2,this means new item for trade box
+                # print(f"NewPrice is over {TRADE_BOX_THRESHOLD}: " + str(row))
+                # if new>TRADE_BOX_THRESHOLD &old<TRADE_BOX_THRESHOLD,this means new item for trade box
                 if row["OldPrice"] < TRADE_BOX_THRESHOLD:
-                    if row["OldPrice"] < 1:  # if new>2&old<1,upgrade from bulk
+                    if row["OldPrice"] < BULK_BOX_THRESHOLD:  # if new>TRADE_BOX_THRESHOLD&old<BULK_BOX_THRESHOLD,upgrade from bulk
                         updateRowStats(row, dictBulkToTrade)
                     else:  # if it's not going to trade then it's going to dollar
                         updateRowStats(row, dictDollarToTrade)
                     rowsProcessed += 1
-                else:  # if new>2,old>2, then don't do anything (ie, no change)
+                else:  # if new>TRADE_BOX_THRESHOLD,old>TRADE_BOX_THRESHOLD, then don't do anything (ie, no change)
                     updateRowStats(row, dictUnchangedCards)
                     rowsProcessed += 1
             # change for changes to dollar
             elif row["NewPrice"] >= BULK_BOX_THRESHOLD:
-                # if new>1&old>2, downgrade from trades to dollar
+                # if new>BULK_BOX_THRESHOLD&old>TRADE_BOX_THRESHOLD, downgrade from trades to dollar
                 if row["OldPrice"] >= TRADE_BOX_THRESHOLD:
                     updateRowStats(row, dictTradesToDollar)
                     rowsProcessed += 1
-                elif row["OldPrice"] < BULK_BOX_THRESHOLD:  # if new>1&old<1, upgrade from bulk to dollar
-                    updateRowStats(row, dictBulktoDollar)
+                elif row["OldPrice"] < BULK_BOX_THRESHOLD:  # if new>BULK_BOX_THRESHOLD&old<BULK_BOX_THRESHOLD, upgrade from bulk to dollar
+                    updateRowStats(row, dictBulkToDollar)
                     rowsProcessed += 1
-                else:  # if new>1&old>1, do nothing (ie, no change)
+                else:  # if new>BULK_BOX_THRESHOLD&old>BULK_BOX_THRESHOLD, do nothing (ie, no change)
                     updateRowStats(row, dictUnchangedCards)
                     rowsProcessed += 1
             # check for downgrades to bulk
             elif row["NewPrice"] < BULK_BOX_THRESHOLD:
-                # if new<1&old>2, downgrade from trades to bulk
+                # if new<BULK_BOX_THRESHOLD&old>TRADE_BOX_THRESHOLD, downgrade from trades to bulk
                 if row["OldPrice"] >= TRADE_BOX_THRESHOLD:
                     updateRowStats(row, dictTradesToBulk)
                     rowsProcessed += 1
-                elif row["OldPrice"] >= 1:  # if new<1&old>1, downgrade from dollar to bulk
+                elif row["OldPrice"] >= BULK_BOX_THRESHOLD:  # if new<BULK_BOX_THRESHOLD&old>BULK_BOX_THRESHOLD, downgrade from dollar to bulk
                     updateRowStats(row, dictDollarToBulk)
                     rowsProcessed += 1
-                else:  # if new<1&old<1, do nothing (ie, no change)
+                else:  # if new<BULK_BOX_THRESHOLD&old<BULK_BOX_THRESHOLD, do nothing (ie, no change)
                     updateRowStats(row, dictUnchangedCards)
                     rowsProcessed += 1
 
-    debug("total rows processed: " + str(rowsProcessed) +
-          " out of (" + str(len(df)) + ")")
+    debug("total rows processed: " + str(rowsProcessed)
+          + " out of (" + str(len(df)) + ")")
 
     debug("dictNewCards: " + str(len(dictNewCards)) + str(dictNewCards))
 
@@ -630,7 +630,7 @@ def loopDataFrame(df):
     printStats(dictGoneCards, "GoneCards")
     printStats(dictUnchangedCards, "UnchangedCards")
     printStats(dictBulkToTrade, "Bulk Upgraded to Trade Box")
-    printStats(dictBulktoDollar, "Bulk Upgraded to Dollar Box")
+    printStats(dictBulkToDollar, "Bulk Upgraded to Dollar Box")
     printStats(dictDollarToTrade, "Dollar Upgraded to Trade Box")
     printStats(dictDollarToBulk, "Dollar Downgraded to Bulk Box")
     printStats(dictTradesToDollar, "Trades Downgraded to Dollar Box")
@@ -697,14 +697,14 @@ def queryForReports(df):
     stats["count-gone-cards"] = len(dfGoneCards)
 
     # query for unch- these are cards with no need to be moved from their location
-    dfUnchCards = df.query("(IsNew != True) & (IsGone != True) & (" +
-                           " ( (OldPrice >= " + str(TRADE_BOX_THRESHOLD) +
-                           ") & (NewPrice >= " +
-                           str(TRADE_BOX_THRESHOLD) + ") )" +
-                           "| ( ( (OldPrice >= 1) & (OldPrice < " + str(TRADE_BOX_THRESHOLD) +
-                           ") ) & ( (NewPrice >= 1) & (NewPrice < " +
-                           str(TRADE_BOX_THRESHOLD) + ") ) )" +
-                           "| ( (OldPrice < 1) & (NewPrice < 1) )" +
+    dfUnchCards = df.query("(IsNew != True) & (IsGone != True) & ("
+                           + " ( (OldPrice >= " + str(TRADE_BOX_THRESHOLD)
+                           + ") & (NewPrice >= "
+                           + str(TRADE_BOX_THRESHOLD) + ") )"
+                           + "| ( ( (OldPrice >= 1) & (OldPrice < " + str(TRADE_BOX_THRESHOLD)
+                           + ") ) & ( (NewPrice >= 1) & (NewPrice < "
+                           + str(TRADE_BOX_THRESHOLD) + ") ) )"
+                           + "| ( (OldPrice < 1) & (NewPrice < 1) )"
                            ")")
     results["unch-cards"] = dfUnchCards
     stats["count-unch-cards"] = len(dfUnchCards)
@@ -714,8 +714,8 @@ def queryForReports(df):
         + stats["count-bulk-to-dollar"] + stats["count-bulk-to-trades"]
     stats["stats"] = calcStatsDict(df)
     timeQueryEnd = timer()
-    print("Total time elapsed for query: " +
-          str(timeQueryEnd - timeQueryStart))
+    print("Total time elapsed for query: "
+          + str(timeQueryEnd - timeQueryStart))
 
     return results, stats
 
@@ -826,8 +826,8 @@ def buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName
     htmlStringWriter.write("<body class=\"\">")
     htmlStringWriter.write(
         "<h1>Comparing shifts in magic card prices in my library.</h1>")
-    htmlStringWriter.write("<h2>" + strPrettyTodayFileName +
-                           " with " + strPrettyOldFileName + "</h2>")
+    htmlStringWriter.write("<h2>" + strPrettyTodayFileName
+                           + " with " + strPrettyOldFileName + "</h2>")
     htmlStringWriter.write("<table border=0 style=\"font-size : 18px\">")
     htmlStringWriter.write("<tr><td>")
     htmlStringWriter.write(
@@ -835,44 +835,44 @@ def buildHTMLReport(dfMergeCards, dictResults, dictResultStats, strTodayFileName
     htmlStringWriter.write(
         "</td><td colspan=3 align=\"right\"><input type=\"text\" id=\"FilterInput\" onkeyup=\"filterTDs()\" placeholder=\"Filter by text..\"></td></tr>")
     htmlStringWriter.write("<tr><td>")
-    htmlStringWriter.write("New cards:</td><td><b>" +
-                           str(dictResultStats["count-new-cards"]) + "</b>")
+    htmlStringWriter.write("New cards:</td><td><b>"
+                           + str(dictResultStats["count-new-cards"]) + "</b>")
     htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
     htmlStringWriter.write("<tr><td>")
-    htmlStringWriter.write("Gone cards:</td><td><b>" +
-                           str(dictResultStats["count-gone-cards"]) + "</b>")
+    htmlStringWriter.write("Gone cards:</td><td><b>"
+                           + str(dictResultStats["count-gone-cards"]) + "</b>")
     htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
     htmlStringWriter.write("<tr><td>")
-    htmlStringWriter.write("Unchanged cards:</td><td><b>" +
-                           str(dictResultStats["count-unch-cards"]) + "</b> ")
+    htmlStringWriter.write("Unchanged cards:</td><td><b>"
+                           + str(dictResultStats["count-unch-cards"]) + "</b> ")
     htmlStringWriter.write("</td><td colspan=3>&nbsp;</td></tr>")
     htmlStringWriter.write("<tr><td>")
     htmlStringWriter.write("Positive card shifts: </td><td>")
-    htmlStringWriter.write("<b>" + str(dictResultStats["count-bulk-to-dollar"] +
-                                       dictResultStats["count-bulk-to-trades"] + dictResultStats["count-dollar-to-trades"]) + "</b> ")
+    htmlStringWriter.write("<b>" + str(dictResultStats["count-bulk-to-dollar"]
+                                       + dictResultStats["count-bulk-to-trades"] + dictResultStats["count-dollar-to-trades"]) + "</b> ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Dollar to Trades: <b>" +
-                           str(dictResultStats["count-dollar-to-trades"]) + "</b>; ")
+    htmlStringWriter.write("From Dollar to Trades: <b>"
+                           + str(dictResultStats["count-dollar-to-trades"]) + "</b>; ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Bulk to Trades: <b>" +
-                           str(dictResultStats["count-bulk-to-trades"]) + "</b>; ")
+    htmlStringWriter.write("From Bulk to Trades: <b>"
+                           + str(dictResultStats["count-bulk-to-trades"]) + "</b>; ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Bulk to Dollar: <b>" +
-                           str(dictResultStats["count-bulk-to-dollar"]) + "</b> ")
+    htmlStringWriter.write("From Bulk to Dollar: <b>"
+                           + str(dictResultStats["count-bulk-to-dollar"]) + "</b> ")
     htmlStringWriter.write("</td></tr>")
     htmlStringWriter.write("<tr><td>")
     htmlStringWriter.write("Negative card shifts: </td><td>")
-    htmlStringWriter.write("<b>" + str(dictResultStats["count-trades-to-dollar"] +
-                                       dictResultStats["count-trades-to-bulk"] + dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+    htmlStringWriter.write("<b>" + str(dictResultStats["count-trades-to-dollar"]
+                                       + dictResultStats["count-trades-to-bulk"] + dictResultStats["count-dollar-to-bulk"]) + "</b> ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Trades to Dollar: <b>" +
-                           str(dictResultStats["count-trades-to-dollar"]) + "</b>; ")
+    htmlStringWriter.write("From Trades to Dollar: <b>"
+                           + str(dictResultStats["count-trades-to-dollar"]) + "</b>; ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Trades to Bulk: <b>" +
-                           str(dictResultStats["count-trades-to-bulk"]) + "</b>; ")
+    htmlStringWriter.write("From Trades to Bulk: <b>"
+                           + str(dictResultStats["count-trades-to-bulk"]) + "</b>; ")
     htmlStringWriter.write("</td><td>")
-    htmlStringWriter.write("From Dollar to Bulk: <b>" +
-                           str(dictResultStats["count-dollar-to-bulk"]) + "</b> ")
+    htmlStringWriter.write("From Dollar to Bulk: <b>"
+                           + str(dictResultStats["count-dollar-to-bulk"]) + "</b> ")
     htmlStringWriter.write("</td></tr></table>")
     htmlStringWriter.write(htmlStats(dfMergeCards))
     htmlStringWriter.write("<hr/>")
