@@ -51,7 +51,7 @@ CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 10  # this might change, but it's this for now
 BULK_BOX_THRESHOLD = 3  # used to be a dollar, but some buyers said less than #4 is bulk
-CURRENT_VERSION = "0.0.21"
+CURRENT_VERSION = "0.0.22"
 HOST_NAME = platform.node()
 
 
@@ -642,8 +642,7 @@ def loopDataFrame(df):
 
 
 def queryForReports(df):
-    # run the queries needed for reporting
-    # return a dictionary of all the query result dataframes, dictionary of stats
+    """run the queries needed for reporting and return a dictionary of all the query result dataframes, dictionary of stats"""
 
     timeQueryStart = timer()
 
@@ -652,37 +651,37 @@ def queryForReports(df):
 
     # query for bulk to trades (good)
     dfBulkToTrades = df.query(
-        "(IsNew != True) & (OldPrice < 1) & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
+        "(IsNew != True) & (OldPrice < " + str(BULK_BOX_THRESHOLD) + ") & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
     results["bulk-to-trades"] = dfBulkToTrades
     stats["count-bulk-to-trades"] = len(dfBulkToTrades)
 
     # query for bulk to dollar (good)
     dfBulkToDollar = df.query(
-        "(IsNew != True) & (OldPrice < 1) & ( (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ") )")
+        "(IsNew != True) & (OldPrice < " + str(BULK_BOX_THRESHOLD) + ") & ( (NewPrice >= " + str(BULK_BOX_THRESHOLD) + ") & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ") )")
     results["bulk-to-dollar"] = dfBulkToDollar
     stats["count-bulk-to-dollar"] = len(dfBulkToDollar)
 
     # query for dollar to trades (good)
     dfDollarToTrades = df.query("(IsNew != True) & ( (OldPrice < " + str(
-        TRADE_BOX_THRESHOLD) + ") & (OldPrice >= 1) ) & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
+        TRADE_BOX_THRESHOLD) + ") & (OldPrice >= " + str(BULK_BOX_THRESHOLD) + ") ) & (NewPrice >= " + str(TRADE_BOX_THRESHOLD) + ")")
     results["dollar-to-trades"] = dfDollarToTrades
     stats["count-dollar-to-trades"] = len(dfDollarToTrades)
 
     # query for dollar to bulk (bad)
     dfDollarToBulk = df.query(
-        "(IsNew != True) & ( (OldPrice < " + str(TRADE_BOX_THRESHOLD) + ") & (OldPrice >= 1) ) & (NewPrice < 1)")
+        "(IsNew != True) & ( (OldPrice < " + str(TRADE_BOX_THRESHOLD) + ") & (OldPrice >= " + str(BULK_BOX_THRESHOLD) + ") ) & (NewPrice < " + str(BULK_BOX_THRESHOLD) + ")")
     results["dollar-to-bulk"] = dfDollarToBulk
     stats["count-dollar-to-bulk"] = len(dfDollarToBulk)
 
     # query for trades to dollar (bad)
     dfTradesToDollar = df.query("(IsNew != True) & (OldPrice > " + str(
-        TRADE_BOX_THRESHOLD) + ") & (NewPrice >= 1) & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ")")
+        TRADE_BOX_THRESHOLD) + ") & (NewPrice >= " + str(BULK_BOX_THRESHOLD) + ") & (NewPrice < " + str(TRADE_BOX_THRESHOLD) + ")")
     results["trades-to-dollar"] = dfTradesToDollar
     stats["count-trades-to-dollar"] = len(dfTradesToDollar)
 
     # query for trade to bulk (bad)
     dfTradesToBulk = df.query(
-        "(IsNew != True) & (OldPrice > " + str(TRADE_BOX_THRESHOLD) + ") & (NewPrice <1)")
+        "(IsNew != True) & (OldPrice > " + str(TRADE_BOX_THRESHOLD) + ") & (NewPrice <" + str(BULK_BOX_THRESHOLD) + ")")
     results["trades-to-bulk"] = dfTradesToBulk
     stats["count-trades-to-bulk"] = len(dfTradesToBulk)
 
@@ -701,10 +700,10 @@ def queryForReports(df):
                            + " ( (OldPrice >= " + str(TRADE_BOX_THRESHOLD)
                            + ") & (NewPrice >= "
                            + str(TRADE_BOX_THRESHOLD) + ") )"
-                           + "| ( ( (OldPrice >= 1) & (OldPrice < " + str(TRADE_BOX_THRESHOLD)
-                           + ") ) & ( (NewPrice >= 1) & (NewPrice < "
+                           + "| ( ( (OldPrice >= " + str(BULK_BOX_THRESHOLD) + ") & (OldPrice < " + str(TRADE_BOX_THRESHOLD)
+                           + ") ) & ( (NewPrice >= " + str(BULK_BOX_THRESHOLD) + ") & (NewPrice < "
                            + str(TRADE_BOX_THRESHOLD) + ") ) )"
-                           + "| ( (OldPrice < 1) & (NewPrice < 1) )"
+                           + "| ( (OldPrice < " + str(BULK_BOX_THRESHOLD) + ") & (NewPrice < " + str(BULK_BOX_THRESHOLD) + ") )"
                            ")")
     results["unch-cards"] = dfUnchCards
     stats["count-unch-cards"] = len(dfUnchCards)
@@ -751,7 +750,7 @@ def fetchAndWriteDeckboxLibrary(strTodayFileName):
         debug("j'exist, donc il ne faut que je getter le file")
     else:
         # now call out to deckbox.org to get inventory as csv, this command is dumped from firefox and seems to work
-        debug("je n'exist pas, donc if faut que je getter le file")
+        debug("je n'exist pas, donc il faut que je getter le file")
         response = requests.get('https://deckbox.org/sets/export/1016639',
                                 headers=headers, params=params, cookies=cookies)
         response.encoding = "UTF-8"
