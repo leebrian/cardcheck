@@ -51,7 +51,7 @@ CONFIG_FILE_NAME = "config.json"
 COOKIE_FILE_NAME = "cookies.json"
 TRADE_BOX_THRESHOLD = 10  # this might change, but it's this for now
 BULK_BOX_THRESHOLD = 3  # used to be a dollar, but some buyers said less than #4 is bulk
-CURRENT_VERSION = "0.0.22"
+CURRENT_VERSION = "0.0.23"
 HOST_NAME = platform.node()
 
 
@@ -62,6 +62,7 @@ def makeCookies(cookies):
     return
 
 
+# all I really care about is the _tcg_session cookie, so grab it from browser's inspect
 def eatCookies():
     """read a dictionary of http cookies from a local file"""
     with open(COOKIE_FILE_NAME, "r") as file:
